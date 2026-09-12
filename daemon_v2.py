@@ -99,7 +99,8 @@ class GemBridgeDaemonV2:
             gemini_client=self.gemini_client
         )
         self.write_executor = WriteExecutor(
-            protected_patterns=self.config.get("protected_files")
+            protected_patterns=self.config.get("protected_files"),
+            gemini_client=self.gemini_client
         )
         self.exec_executor = ExecExecutor(drive_service=self.drive_service)
 
@@ -412,6 +413,8 @@ class GemBridgeDaemonV2:
 
             output_str = ""
             history_entry = ""
+            action_status: Optional[str] = None
+            action_message: Optional[str] = None
 
             with profiler.step("executor"):
                 if intent.task_type == TaskType.READ:
@@ -424,6 +427,12 @@ class GemBridgeDaemonV2:
                         f"*(전체 보고서는 Google Drive의 `{result.get('doc_name')}` 문서에 저장되었습니다.)*"
                     )
                     history_entry = f"- [{now_str[5:16]}] [📄 분석] {intent.summary} (#{trace_id[-4:]})"
+                    if "[Guardrail:" in (intent.reasoning or ""):
+                        action_status = "GUARDRAIL_REDIRECT"
+                        action_message = "파일 수정 지시가 구체적이지 않아 안전 가드레일에 의해 [분석 보고서]로 자동 전환되었습니다."
+                    else:
+                        action_status = "READ_SUCCESS"
+                        action_message = f"[{intent.target_repo}] {intent.summary} 분석 보고서 생성 완료"
 
                 elif intent.task_type == TaskType.WRITE:
                     result = self.write_executor.execute(repo_path, intent)
@@ -439,6 +448,11 @@ class GemBridgeDaemonV2:
                         f"```diff\n{diff_preview}\n```"
                     )
                     history_entry = f"- [{now_str[5:16]}] [✅ 수정] `{result.get('target_path')}`: {result.get('commit_message')} ({result.get('commit_hash', '')[:7]}, #{trace_id[-4:]})"
+                    action_status = "COMMIT_SUCCESS"
+                    if result.get("is_moved") and result.get("source_path"):
+                        action_message = f"`{result.get('source_path')}` ➔ `{result.get('target_path')}` 이동 및 Git 반영 완료 ({result.get('commit_hash', '')[:7]})"
+                    else:
+                        action_message = f"`{result.get('target_path')}` 변경 및 Git 반영 완료 ({result.get('commit_hash', '')[:7]})"
 
                 elif intent.task_type == TaskType.EXEC:
                     result = self.exec_executor.execute(repo_path, intent, original_title="CONSOLE_EXEC", parent_id=self.folder_id)
@@ -452,6 +466,8 @@ class GemBridgeDaemonV2:
                         f"```text\n{console_out or '(출력 없음)'}\n```"
                     )
                     history_entry = f"- [{now_str[5:16]}] [💻 실행] `{intent.exec_command}` (종료: {result.get('exit_code')}, #{trace_id[-4:]})"
+                    action_status = "READ_SUCCESS"
+                    action_message = f"명령어 `{intent.exec_command}` 실행 완료 (종료 코드: {result.get('exit_code')})"
 
             # 9. Update History list (keep recent 3)
             history.insert(0, history_entry)
@@ -469,7 +485,9 @@ class GemBridgeDaemonV2:
                     history_items=history,
                     trace_id=trace_id,
                     duration_summary=duration_summary,
-                    sync_lag_ms=sync_lag_ms
+                    sync_lag_ms=sync_lag_ms,
+                    action_status=action_status,
+                    action_message=action_message,
                 )
                 self._write_console_content(done_text)
 
@@ -504,7 +522,9 @@ class GemBridgeDaemonV2:
                 status="ERROR",
                 input_command=DEFAULT_PLACEHOLDER,
                 output_content=error_output,
-                trace_id=trace_id
+                trace_id=trace_id,
+                action_status="ERROR",
+                action_message=f"{type(error).__name__}: {str(error)}"
             )
             self._write_console_content(error_text)
         except Exception as err:

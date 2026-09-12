@@ -11,6 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.3] - 2026-09-12
+
+### Added
+- **Natural Language Refactoring & Code Synthesis Engine (`core/executor_write.py`, `core/intent_analyzer.py`)**:
+  - `IntentAnalysisResult` extended with `source_path` and `instruction` fields.
+  - Guardrail adjusted: natural language modification/move requests no longer get unconditionally downgraded to `READ` when full file `content` is missing from the mobile command.
+  - Autonomous Code Synthesis (`WriteExecutor.synthesize_code`): uses `gemini-3.6-flash` to read baseline files, interpret natural language instructions (e.g. adjust relative links, fix functions), and synthesize target code.
+  - File Move & Rename Automation: handles `source_path` ➔ `target_path` transition, removes original file, and stages git operations (`git add -u`) for seamless commit & push.
+- **Action Status Banner System (`core/console_protocol.py`)**:
+  - High-contrast visual action banners embedded in the `GeminiBridge/CONSOLE` document output section:
+    - 🟢 `[작업 완료 / Git 반영]` (`COMMIT_SUCCESS`)
+    - 🟡 `[가드레일 작동 / 분석 대체]` (`GUARDRAIL_REDIRECT`)
+    - 🔴 `[작업 실패 / 오류]` (`ERROR`)
+    - 🔵 `[조회/분석 완료]` (`READ_SUCCESS`)
+  - Solves user status blindness by immediately communicating whether an operation was committed, redirected, or encountered an error.
+- **Test Suite Expansion**:
+  - 45 unit tests passing across protocol, intent analyzer, write executor, read executor, telemetry, and daemon.
+
+---
+
 ## [2.1.2] - 2026-09-12
 
 ### Verified & Hardened

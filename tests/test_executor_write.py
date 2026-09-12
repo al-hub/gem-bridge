@@ -76,6 +76,65 @@ class TestExecutorWrite(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.executor.execute(self.repo_dir, intent)
 
+    @patch.object(WriteExecutor, "_git_commit_and_push", return_value="mv12345")
+    def test_file_move_and_synthesize_code(self, mock_git):
+        # 1. Setup root index.html
+        root_html = self.repo_dir / "index.html"
+        root_html.write_text('<html><a href="README.md">Doc</a></html>', encoding="utf-8")
+
+        mock_gemini = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = '<html><a href="../README.md">Doc</a></html>'
+        mock_gemini.models.generate_content.return_value = mock_response
+
+        executor = WriteExecutor(gemini_client=mock_gemini)
+        intent = IntentAnalysisResult(
+            task_type=TaskType.WRITE,
+            target_repo="gem-bridge",
+            summary="Move index.html to docs/ and fix links",
+            source_path="index.html",
+            target_path="docs/index.html",
+            instruction="루트의 index.html을 docs/index.html로 이동하고 상대 경로 수정",
+            commit_message="docs: move index.html to docs/"
+        )
+
+        result = executor.execute(self.repo_dir, intent)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["commit_hash"], "mv12345")
+        self.assertFalse(root_html.exists(), "Original source file should be removed upon move")
+        new_file = self.repo_dir / "docs" / "index.html"
+        self.assertTrue(new_file.exists())
+        self.assertEqual(new_file.read_text(encoding="utf-8"), '<html><a href="../README.md">Doc</a></html>')
+        self.assertIn("docs/index.html", result["target_path"])
+
+    @patch.object(WriteExecutor, "_git_commit_and_push", return_value="synth99")
+    def test_synthesize_code_when_content_missing(self, mock_git):
+        # Setup file
+        calc_path = self.repo_dir / "calc.py"
+        calc_path.write_text("def add(a, b): return a - b\n", encoding="utf-8")
+
+        mock_gemini = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "```python\ndef add(a, b): return a + b\n```"
+        mock_gemini.models.generate_content.return_value = mock_response
+
+        executor = WriteExecutor(gemini_client=mock_gemini)
+        intent = IntentAnalysisResult(
+            task_type=TaskType.WRITE,
+            target_repo="gem-bridge",
+            summary="Fix add function bug",
+            target_path="calc.py",
+            instruction="Fix bug in add function",
+            commit_message="fix: add should sum"
+        )
+
+        result = executor.execute(self.repo_dir, intent)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(calc_path.read_text(encoding="utf-8"), "def add(a, b): return a + b\n")
+        self.assertIn("-def add(a, b): return a - b", result["diff"])
+        self.assertIn("+def add(a, b): return a + b", result["diff"])
+
 
 if __name__ == "__main__":
     unittest.main()
+

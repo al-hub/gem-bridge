@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 from core.intent_analyzer import IntentAnalyzer, IntentAnalysisResult, TaskType
@@ -88,6 +89,28 @@ commit_message: feat: update landing page
         self.assertEqual(result.commit_message, "feat: update landing page")
         self.assertIn("<!DOCTYPE html>", result.content)
 
+    def test_natural_language_refactoring_preserves_write(self):
+        # When target_path and instruction are present (even if content is null), WRITE is preserved!
+        mock_response = MagicMock()
+        mock_response.text = json.dumps({
+            "task_type": "WRITE",
+            "target_repo": "gem-bridge",
+            "summary": "Move index.html to docs/ and adjust relative paths",
+            "source_path": "index.html",
+            "target_path": "docs/index.html",
+            "content": None,
+            "instruction": "루트의 index.html을 docs/index.html로 이동하고 상대 경로 수정",
+            "commit_message": "docs: move index.html to docs/ and fix links"
+        })
+
+        with patch.object(self.analyzer.client.models, "generate_content", return_value=mock_response):
+            result = self.analyzer._analyze_with_llm("!작업 index.html을 docs/로 이동", ["gem-bridge"])
+            self.assertEqual(result.task_type, TaskType.WRITE)
+            self.assertEqual(result.source_path, "index.html")
+            self.assertEqual(result.target_path, "docs/index.html")
+            self.assertIsNotNone(result.instruction)
+
 
 if __name__ == "__main__":
     unittest.main()
+

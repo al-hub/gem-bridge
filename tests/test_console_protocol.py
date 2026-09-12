@@ -108,6 +108,37 @@ class TestConsoleProtocol(unittest.TestCase):
         self.assertIn("1200ms", rendered)
         self.assertIn("동기화 지연", rendered)
 
+    def test_formatter_action_status_banners(self):
+        # 1. Commit Success Banner
+        r1 = ConsoleDocFormatter.render(
+            status="ONLINE",
+            action_status="COMMIT_SUCCESS",
+            action_message="index.html ➔ docs/index.html 이동 및 Git Push 완료",
+            output_content="커밋 내용"
+        )
+        self.assertIn("🟢 **[작업 완료 / Git 반영]**", r1)
+        self.assertIn("index.html ➔ docs/index.html 이동 및 Git Push 완료", r1)
+
+        # 2. Guardrail Redirect Banner
+        r2 = ConsoleDocFormatter.render(
+            status="ONLINE",
+            action_status="GUARDRAIL_REDIRECT",
+            action_message="파일 수정 코드가 명시되지 않아 안전 가드레일에 의해 [분석 보고서]로 대체되었습니다.",
+            output_content="보고서 요약"
+        )
+        self.assertIn("🟡 **[가드레일 작동 / 분석 대체]**", r2)
+        self.assertIn("안전 가드레일에 의해 [분석 보고서]로 대체되었습니다", r2)
+
+        # 3. Error Banner
+        r3 = ConsoleDocFormatter.render(
+            status="ONLINE",
+            action_status="ERROR",
+            action_message="지정된 리포지토리를 찾을 수 없습니다.",
+            output_content="오류 내용"
+        )
+        self.assertIn("🔴 **[작업 실패 / 오류]**", r3)
+        self.assertIn("지정된 리포지토리를 찾을 수 없습니다", r3)
+
 
 if __name__ == "__main__":
     unittest.main()

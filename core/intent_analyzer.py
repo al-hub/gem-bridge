@@ -38,13 +38,21 @@ class IntentAnalysisResult(BaseModel):
         default_factory=list,
         description="List of specific files or directories mentioned in the request"
     )
+    source_path: Optional[str] = Field(
+        None,
+        description="Original relative path if moving, renaming, or refactoring an existing file (e.g. 'index.html')"
+    )
     target_path: Optional[str] = Field(
         None,
-        description="Relative path of file to create or modify for WRITE tasks"
+        description="Relative path of file to create or modify for WRITE tasks (e.g. 'docs/index.html')"
     )
     content: Optional[str] = Field(
         None,
-        description="Full content of the file to write for WRITE tasks"
+        description="Full content of the file to write for WRITE tasks (if explicitly provided)"
+    )
+    instruction: Optional[str] = Field(
+        None,
+        description="Natural language instruction for modifying, refactoring, or updating the file when content is not provided directly"
     )
     commit_message: Optional[str] = Field(
         None,
@@ -281,8 +289,13 @@ class IntentAnalyzer:
 [핵심 규칙 - 절대 준수]
 1. DEFAULT는 무조건 'READ'입니다.
    - 불명확한 지시, 단순 질문, 아키텍처/코드 조사, 버그 원인 분석, 요약 요청은 파일 수정 없이 무조건 'READ'입니다.
-   - 'WRITE'는 오직 사용자가 특정 파일을 생성/수정하도록 명확히 지시하고 반영할 내용(content)이 구체적으로 주어진 경우에만 지정합니다.
-   - 만약 WRITE 지시 같더라도 target_path 또는 content가 불분명하거나 누락되었다면 무조건 'READ'로 강등(fallback)하세요.
+   - 'WRITE'는 파일 생성/수정/이동/리팩토링을 요청한 경우입니다.
+     - target_path: 대상 파일 경로 (필수, 예: 'docs/index.html')
+     - source_path: 이동/이름변경/참조할 원본 파일 경로가 있다면 지정 (예: 'index.html')
+     - content: 직접 파일 본문 전체가 주어진 경우 입력.
+     - instruction: 파일 본문이 직접 주어지지 않고 자연어 수정/리팩토링/경로조정 지시사항인 경우 상세히 기술 (예: '루트의 index.html을 docs/index.html로 이동하고 상대 경로를 맞게 수정')
+     - commit_message: 명확한 Git 커밋 메시지 (예: 'docs: move index.html to docs/ and fix relative links')
+   - 만약 WRITE 지시 같더라도 대상 파일(target_path)이 전혀 특정되지 않거나 수정할 지침(content 또는 instruction)이 없으면 무조건 'READ'로 강등(fallback)하세요.
    - 'EXEC'는 테스트 실행, 빌드, 커맨드라인 명령어 실행을 요청한 경우입니다.
 2. TargetRepo 도출:
    - 사용 가능한 로컬 저장소: {available_repos}
@@ -291,7 +304,7 @@ class IntentAnalyzer:
 3. 명시적 커맨드:
    {hint_instruction}
    - '!분석' -> READ
-   - '!작업' -> WRITE (단, 구체적인 파일 및 내용이 없으면 READ로 처리)
+   - '!작업' -> WRITE (단, target_path와 content/instruction이 모두 누락된 경우에만 READ로 강등)
    - '!실행' -> EXEC
 
 [입력 문서 원문]
@@ -326,17 +339,18 @@ class IntentAnalyzer:
 
         # Enforce safety guardrail: Default is unconditionally READ
         if result.task_type == TaskType.WRITE:
-            if not result.target_path or not result.content:
+            has_actionable_spec = bool(result.content or result.instruction or result.source_path)
+            if not result.target_path or not has_actionable_spec:
                 logger.warning(
-                    f"Downgrading WRITE task to READ: missing target_path or content. Path={result.target_path}"
+                    f"Downgrading WRITE task to READ: missing target_path or actionable spec. Path={result.target_path}"
                 )
                 result.task_type = TaskType.READ
                 result.query = (
-                    f"User requested changes but target_path or content was missing. "
+                    f"User requested changes but target_path or content/instruction was missing. "
                     f"Original summary: {result.summary}. Full instruction: {full_text}"
                 )
                 result.reasoning = (
-                    f"{result.reasoning or ''} [Guardrail: Downgraded to READ because target_path or content was incomplete]"
+                    f"{result.reasoning or ''} [Guardrail: Downgraded to READ because target_path or actionable instruction was incomplete]"
                 ).strip()
 
         # Target repo fallback

@@ -175,6 +175,27 @@ class ConsoleDocFormatter:
         else:
             return f"⚪ {status} ({ts} KST)"
 
+    @staticmethod
+    def make_action_banner(action_status: Optional[str], action_message: Optional[str] = None) -> str:
+        """Generates high-contrast action status banner for CONSOLE output."""
+        if not action_status:
+            return ""
+        status_upper = action_status.upper()
+        if status_upper == "COMMIT_SUCCESS":
+            header = "🟢 **[작업 완료 / Git 반영]**"
+        elif status_upper == "GUARDRAIL_REDIRECT":
+            header = "🟡 **[가드레일 작동 / 분석 대체]**"
+        elif status_upper == "ERROR":
+            header = "🔴 **[작업 실패 / 오류]**"
+        elif status_upper == "READ_SUCCESS":
+            header = "🔵 **[조회/분석 완료]**"
+        else:
+            header = f"ℹ️ **[{action_status}]**"
+
+        if action_message:
+            return f"> {header}\n> {action_message}\n\n"
+        return f"> {header}\n\n"
+
     @classmethod
     def render(
         cls,
@@ -186,14 +207,19 @@ class ConsoleDocFormatter:
         trace_id: Optional[str] = None,
         duration_summary: Optional[str] = None,
         sync_lag_ms: Optional[float] = None,
+        action_status: Optional[str] = None,
+        action_message: Optional[str] = None,
     ) -> str:
         """
         Renders the complete markdown text for CONSOLE Google Doc.
-        Optimized for smartphone Google Docs layout with telemetry metadata.
+        Optimized for smartphone Google Docs layout with telemetry metadata and action status banners.
         """
         badge = cls.make_status_badge(status, timestamp_str)
         cmd_text = (input_command or DEFAULT_PLACEHOLDER).strip()
         out_text = (output_content or "*(아직 실행된 결과가 없습니다. 위 입력창에 작업을 입력하세요.)*").strip()
+
+        # Action banner
+        action_banner = cls.make_action_banner(action_status, action_message)
 
         # Telemetry meta bar
         telemetry_lines = []
@@ -227,7 +253,7 @@ class ConsoleDocFormatter:
 {DELIMITER_LINE}
 
 {OUTPUT_SECTION_HEADER}
-{meta_bar}{out_text}
+{action_banner}{meta_bar}{out_text}
 
 {DELIMITER_LINE}
 
