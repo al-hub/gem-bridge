@@ -20,7 +20,8 @@
     h2 { font-size: 1.4rem; color: #0f172a; font-weight: 700; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
     h3 { font-size: 1rem; color: #334155; font-weight: 600; }
     .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; }
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; text-decoration: none; color: inherit; display: block; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; text-decoration: none; color: inherit; display: block; transition: border-color 0.2s ease; }
+    .card:hover { border-color: var(--primary); }
     .card-title { font-weight: 600; color: #0f172a; margin-bottom: 0.25rem; font-size: 0.95rem; }
     .card-desc { font-size: 0.85rem; color: var(--text-muted); }
     pre { background: #0f172a; color: #e2e8f0; padding: 1rem; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; overflow-x: auto; line-height: 1.5; }
@@ -69,16 +70,16 @@
     <section id="docs">
       <h2>주요 문서 및 명세 (Docs)</h2>
       <div class="grid-3">
-        <a href="../README.md" class="card">
+        <a href="https://github.com/al-hub/gem-bridge" class="card" target="_blank" rel="noopener noreferrer">
           <div class="card-title">README.md ↗</div>
           <div class="card-desc">프로젝트 전체 개요, 기본 환경 설정 및 빠른 시작 가이드</div>
         </a>
-        <a href="verification.md" class="card">
+        <a href="https://github.com/al-hub/gem-bridge/blob/main/docs/verification.md" class="card" target="_blank" rel="noopener noreferrer">
           <div class="card-title">docs/verification.md ↗</div>
           <div class="card-desc">모바일 Gemini 앱 ↔ 로컬 데몬 ↔ Git 커밋 파이프라인 검증 이력</div>
         </a>
-        <a href="ARCHITECTURE.md" class="card">
-          <div class="card-title">docs/architecture.md ↗</div>
+        <a href="https://github.com/al-hub/gem-bridge/blob/main/docs/ARCHITECTURE.md" class="card" target="_blank" rel="noopener noreferrer">
+          <div class="card-title">docs/ARCHITECTURE.md ↗</div>
           <div class="card-desc">WSL systemd 데몬 구조, 파일 감시 루프 및 에러 격리 상세 설계</div>
         </a>
       </div>
@@ -111,11 +112,12 @@
         <li>Python 3.10+ 및 Git 인증 (SSH 키 또는 PAT)</li>
       </ul>
       <h3 style="margin-top: 1rem;">2) 저장소 클론 및 종속성 설치</h3>
-      <pre>git clone git@github.com:al-hub/gem-bridge.git ~/workspace/gem-bridge
+      <pre>git clone https://github.com/al-hub/gem-bridge.git ~/workspace/gem-bridge
 cd ~/workspace/gem-bridge
 pip install -r requirements.txt</pre>
-      <h3 style="margin-top: 1rem;">3) systemd 백그라운드 서비스 등록</h3>
-      <pre>sudo cp gem-bridge.service /etc/systemd/system/
+      <h3 style="margin-top: 1rem;">3) 설정 파일 및 systemd 서비스 등록</h3>
+      <pre># config.json 등 설정 확인 후 서비스 등록 진행
+sudo cp gem-bridge.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now gem-bridge.service
 
