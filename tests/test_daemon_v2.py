@@ -321,10 +321,39 @@ class TestDaemonV2(unittest.TestCase):
         call_kwargs = mock_tasks_mgr.update_task_with_feedback.call_args[1]
         self.assertEqual(call_kwargs["task_id"], "gtask_123")
         self.assertTrue(call_kwargs["is_success"])
-        self.assertEqual(call_kwargs["title"], "gem-bridge docs/guide.md 수정하고 푸시해줘")
+        self.assertEqual(call_kwargs["title"], "[✅완료: a1b2c3d] docs/guide.md - docs: update guide.md via 0-tap")
         self.assertIn("a1b2c3d", call_kwargs["feedback_notes"])
         self.assertIn("+ new content", call_kwargs["feedback_notes"])
+        self.daemon._sync_task_result_to_console.assert_not_called()
+
+    def test_check_and_process_google_tasks_hybrid_mode_syncs_console(self):
+        self.daemon.mode = "hybrid"
+        mock_tasks_mgr = MagicMock()
+        mock_tasks_mgr.is_available = True
+        mock_tasks_mgr.list_pending_tasks.return_value = [
+            {"id": "gtask_h1", "title": "gem-bridge docs/guide.md 수정", "notes": ""}
+        ]
+        self.daemon.tasks_manager = mock_tasks_mgr
+        self.daemon.intent_analyzer.analyze = MagicMock(return_value=IntentAnalysisResult(
+            task_type=TaskType.WRITE,
+            target_repo="gem-bridge",
+            summary="docs/guide.md 수정",
+            target_path="docs/guide.md",
+            instruction="수정 지시",
+            commit_message="docs: update"
+        ))
+        self.daemon.repo_manager.prepare_repo = MagicMock(return_value="/tmp/dummy-gem-bridge")
+        self.daemon.write_executor.execute = MagicMock(return_value={
+            "status": "success", "commit_hash": "c0ffee1", "commit_message": "docs: update",
+            "target_path": "docs/guide.md", "diff": "+ diff"
+        })
+        self.daemon._create_completion_doc = MagicMock()
+        self.daemon._sync_task_result_to_console = MagicMock()
+
+        self.daemon.check_and_process_google_tasks()
+
         self.daemon._sync_task_result_to_console.assert_called_once()
+        mock_tasks_mgr.update_task_with_feedback.assert_called_once()
 
     def test_check_and_process_google_tasks_read(self):
         mock_tasks_mgr = MagicMock()
@@ -355,8 +384,10 @@ class TestDaemonV2(unittest.TestCase):
         call_kwargs = mock_tasks_mgr.update_task_with_feedback.call_args[1]
         self.assertEqual(call_kwargs["task_id"], "gtask_read_99")
         self.assertTrue(call_kwargs["is_success"])
+        self.assertEqual(call_kwargs["title"], "[✅완료: 분석] gem-bridge - 전체 구조 분석")
         self.assertIn("[분석 완료] gem-bridge", call_kwargs["feedback_notes"])
         self.assertIn("[전체 보고서 안내]", call_kwargs["feedback_notes"])
+        self.daemon._sync_task_result_to_console.assert_not_called()
 
     def test_check_and_process_google_tasks_error(self):
         mock_tasks_mgr = MagicMock()
@@ -374,8 +405,33 @@ class TestDaemonV2(unittest.TestCase):
         call_kwargs = mock_tasks_mgr.update_task_with_feedback.call_args[1]
         self.assertEqual(call_kwargs["task_id"], "gtask_err_01")
         self.assertFalse(call_kwargs["is_success"])
+        self.assertEqual(call_kwargs["title"], "[❌오류: 실패] !작업 unknown-repo 파일수정 - 저장소 접근 실패")
         self.assertIn("[실행 오류]", call_kwargs["feedback_notes"])
         self.assertIn("저장소 접근 실패", call_kwargs["feedback_notes"])
+
+    def test_run_poll_cycle_tasks_light_mode_skips_drive_polling(self):
+        self.daemon.mode = "tasks_light"
+        self.daemon.check_and_process_console = MagicMock()
+        self.daemon.find_candidate_documents = MagicMock()
+        self.daemon.check_and_process_google_tasks = MagicMock()
+
+        self.daemon.run_poll_cycle()
+
+        self.daemon.check_and_process_console.assert_not_called()
+        self.daemon.find_candidate_documents.assert_not_called()
+        self.daemon.check_and_process_google_tasks.assert_called_once()
+
+    def test_run_poll_cycle_hybrid_mode_polls_drive_and_tasks(self):
+        self.daemon.mode = "hybrid"
+        self.daemon.check_and_process_console = MagicMock()
+        self.daemon.find_candidate_documents = MagicMock(return_value=[])
+        self.daemon.check_and_process_google_tasks = MagicMock()
+
+        self.daemon.run_poll_cycle()
+
+        self.daemon.check_and_process_console.assert_called_once()
+        self.daemon.find_candidate_documents.assert_called_once()
+        self.daemon.check_and_process_google_tasks.assert_called_once()
 
 
 if __name__ == "__main__":

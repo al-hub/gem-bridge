@@ -90,6 +90,8 @@ class TestGoogleTasksManager(unittest.TestCase):
                 {"id": "t2", "title": "[✅완료] 이전에 끝난 작업", "status": "needsAction"},
                 {"id": "t3", "title": "[❌오류] 실패했던 작업", "status": "needsAction"},
                 {"id": "t4", "title": "[⏳진행] 처리 중인 작업", "status": "needsAction"},
+                {"id": "t5", "title": "[✅완료: f163137] docs/guide.md 수정", "status": "needsAction"},
+                {"id": "t6", "title": "[❌오류: 실패] 명령 에러", "status": "needsAction"},
             ]
         }
 
@@ -156,6 +158,32 @@ class TestGoogleTasksManager(unittest.TestCase):
         self.assertEqual(patch_kwargs["body"]["title"], "[❌오류] 기존 작업")
         self.assertEqual(patch_kwargs["body"]["status"], "needsAction")
         self.assertIn("[실행 오류] 저장소 접근 실패", patch_kwargs["body"]["notes"])
+
+    @patch("core.google_tasks.build")
+    def test_update_task_with_feedback_zero_click_title(self, mock_build):
+        mock_service = MagicMock()
+        mock_build.return_value = mock_service
+
+        mock_tasks_resource = mock_service.tasks.return_value
+        mock_tasks_resource.get.return_value.execute.return_value = {
+            "id": "t1",
+            "title": "gem-bridge docs/guide.md 수정",
+            "notes": ""
+        }
+        mock_tasks_resource.patch.return_value.execute.return_value = {"id": "t1"}
+
+        manager = GoogleTasksManager(credentials=self.mock_creds)
+        rich_title = "[✅완료: f163137] docs/guide.md - 에러 핸들링 보강"
+        success = manager.update_task_with_feedback(
+            task_id="t1",
+            is_success=True,
+            title=rich_title,
+            feedback_notes="[반영 완료] 커밋: f163137"
+        )
+
+        self.assertTrue(success)
+        patch_kwargs = mock_tasks_resource.patch.call_args[1]
+        self.assertEqual(patch_kwargs["body"]["title"], rich_title)
 
     @patch("core.google_tasks.build")
     def test_archive_stale_tasks(self, mock_build):

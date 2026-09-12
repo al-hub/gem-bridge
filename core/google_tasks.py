@@ -10,7 +10,7 @@ TASKS_SCOPE = "https://www.googleapis.com/auth/tasks"
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 COMBINED_SCOPES = [DRIVE_SCOPE, TASKS_SCOPE]
 
-PROCESSED_PREFIXES = ("[✅완료]", "[❌오류]", "[⏳진행]")
+PROCESSED_PREFIXES = ("[✅완료", "[❌오류", "[⏳진행", "[✅", "[❌")
 MAX_NOTES_LENGTH = 8000
 
 
@@ -149,12 +149,18 @@ class GoogleTasksManager:
             return False
 
         try:
-            prefix = "[✅완료]" if is_success else "[❌오류]"
             clean_title = title.strip()
-            for p in PROCESSED_PREFIXES:
-                if clean_title.startswith(p):
-                    clean_title = clean_title[len(p):].strip()
-            new_title = f"{prefix} {clean_title}"[:1024]
+            if clean_title.startswith("[✅") or clean_title.startswith("[❌"):
+                new_title = clean_title[:1024]
+            else:
+                for p in PROCESSED_PREFIXES:
+                    if clean_title.startswith(p):
+                        if "]" in clean_title:
+                            clean_title = clean_title.split("]", 1)[1].strip()
+                        else:
+                            clean_title = clean_title[len(p):].strip()
+                prefix = "[✅완료]" if is_success else "[❌오류]"
+                new_title = f"{prefix} {clean_title}"[:1024]
 
             # Fetch existing task to preserve prior notes if any
             existing_notes = ""
@@ -212,7 +218,7 @@ class GoogleTasksManager:
 
             for item in items:
                 title = item.get("title", "")
-                if any(title.startswith(p) for p in ("[✅완료]", "[❌오류]")):
+                if any(title.startswith(p) for p in ("[✅완료", "[❌오류", "[✅", "[❌")):
                     updated_str = item.get("updated", "")
                     try:
                         from datetime import datetime

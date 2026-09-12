@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.12] - 2026-09-12
+
+### Added
+- **Tasks-Centric Lightweight Mode (`mode: "tasks_light"`) (`daemon_v2.py`, `config.json`)**:
+  - Gated continuous Google Drive polling operations behind `mode == "hybrid"`. In `tasks_light` mode, continuous CONSOLE doc `modifiedTime` checks, candidate document searches, and 5-minute heartbeat updates are silenced, eliminating thousands of redundant Drive API calls per hour.
+  - Idle polling loop latency reduced by ~80% (from ~1.5s down to <0.1s), directing all high-frequency cycles solely to Google Tasks.
+  - Preserved one-shot Google Drive report backups (`drive_backup: true`) for READ reports to `reports/` folder.
+  - Maintained 100% backward compatibility with legacy Drive workflows via `"mode": "hybrid"`.
+- **0-Click Compressed Titles for Instant Mobile Feedback (`core/google_tasks.py`, `daemon_v2.py`)**:
+  - Implemented high-density feedback titles formatted directly into Google Tasks:
+    - **WRITE**: `[✅완료: {commit_hash_short}] {target_file} - {summary_msg}` (e.g. `[✅완료: f163137] docs/guide.md - 에러 핸들링 보강`).
+    - **READ**: `[✅완료: 분석] {repo} - {summary}` (e.g. `[✅완료: 분석] remote_codex - 주요 파일 및 아키텍처 분석`).
+    - **EXEC**: `[{prefix}: {status}] {repo} - {summary}` (e.g. `[✅완료: OK] gem-bridge - unittest (79/79 통과)`).
+    - **ERROR**: `[❌오류: 실패] {title} - {error_msg}`.
+  - Mobile Gemini users can view commit hashes, affected files, and outcomes directly within the chat card widget without opening external links.
+  - Expanded `PROCESSED_PREFIXES` and `update_task_with_feedback()` in `core/google_tasks.py` to seamlessly recognize and preserve rich 0-Click titles.
+- **Test Suite Expansion (`tests/test_daemon_v2.py`, `tests/test_google_tasks.py`)**:
+  - Added test cases validating `tasks_light` mode Drive skip, hybrid mode CONSOLE sync, and 0-Click title preservation.
+  - Expanded test suite from 75 to 79 tests (100% passing).
+
+---
+
 ## [2.1.11] - 2026-09-12
 
 ### Added

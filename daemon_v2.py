@@ -93,6 +93,8 @@ class GemBridgeDaemonV2:
     def __init__(self, config: Optional[dict] = None):
         self.config = config or load_config()
         self.poll_interval = self.config.get("poll_interval_seconds", 5)
+        self.mode = self.config.get("mode", "tasks_light")
+        self.drive_backup = self.config.get("drive_backup", True)
         self.active_poll_interval: float = 1.0
         self.idle_poll_interval: float = float(self.poll_interval)
         self._last_activity_time: float = time.time()
@@ -117,7 +119,7 @@ class GemBridgeDaemonV2:
             default_repo="gem-bridge"
         )
         self.read_executor = ReadExecutor(
-            drive_service=self.drive_service,
+            drive_service=self.drive_service if (self.mode == "hybrid" or self.drive_backup) else None,
             gemini_client=self.gemini_client
         )
         self.write_executor = WriteExecutor(
@@ -129,18 +131,18 @@ class GemBridgeDaemonV2:
         self.processed_ids: Set[str] = set()
 
         # CONSOLE and STATUS doc tracking
-        self.folder_id: Optional[str] = self._find_or_create_folder()
+        self.folder_id: Optional[str] = self._find_or_create_folder() if (self.drive_service and (self.mode == "hybrid" or self.drive_backup)) else None
         self.storage_manager = DriveStorageManager(self.drive_service, self.folder_id) if self.drive_service and self.folder_id else None
         self.janitor = StorageJanitor(self.drive_service, self.folder_id, storage_manager=self.storage_manager) if self.drive_service and self.folder_id else None
         self._last_janitor_run_time: float = time.time()
-        self.status_doc_id: Optional[str] = self._init_status_doc()
+        self.status_doc_id: Optional[str] = self._init_status_doc() if (self.drive_service and self.mode == "hybrid") else None
         self.console_doc_id: Optional[str] = None
         self._last_console_content_hash: Optional[str] = None
         self._last_processed_command_hash: Optional[str] = None
         self._last_console_modified_time: Optional[str] = None
         self._last_heartbeat_time: float = time.time()
 
-        if self.drive_service:
+        if self.drive_service and self.mode == "hybrid":
             self.console_doc_id = self._init_console_doc()
 
         # Google Tasks Manager (0-Tap Gemini Mobile Tasks)
@@ -1095,13 +1097,14 @@ class GemBridgeDaemonV2:
                         f"[{trace_id}][Tasks Intent] Type: {intent.task_type.value} | TargetRepo: {intent.target_repo} | Summary: {intent.summary}"
                     )
 
-                    self._update_status(
-                        f"# ⏳ [0-Tap Tasks 처리 중] {task_title}\n\n"
-                        f"- 시각: {now_str}\n"
-                        f"- 대상: {intent.target_repo}\n"
-                        f"- 작업 유형: {intent.task_type.value}\n"
-                        f"- 요약: {intent.summary}"
-                    )
+                    if self.mode == "hybrid":
+                        self._update_status(
+                            f"# ⏳ [0-Tap Tasks 처리 중] {task_title}\n\n"
+                            f"- 시각: {now_str}\n"
+                            f"- 대상: {intent.target_repo}\n"
+                            f"- 작업 유형: {intent.task_type.value}\n"
+                            f"- 요약: {intent.summary}"
+                        )
 
                     repo_path = self.repo_manager.prepare_repo(intent.target_repo)
 
@@ -1109,20 +1112,21 @@ class GemBridgeDaemonV2:
                         rep_folder = self.storage_manager.get_destination_folder("reports") if self.storage_manager else self.folder_id
                         doc_title = self.storage_manager.format_mobile_title(TaskType.READ, intent.target_repo, intent.summary) if self.storage_manager else task_title
                         result = self.read_executor.execute(repo_path, intent, original_title=doc_title, parent_id=rep_folder)
-                        output_str = (
-                            f"### 📄 [0-Tap Tasks 분석 보고서 요약]\n"
-                            f"- 대상 저장소: `{intent.target_repo}`\n"
-                            f"- 분석 주제: **{intent.summary}**\n\n"
-                            f"{result.get('preview', '')}\n\n"
-                            f"*(전체 보고서는 Google Drive의 `{result.get('doc_name')}` 문서에 저장되었습니다.)*"
-                        )
-                        self._sync_task_result_to_console(
-                            output_str=output_str,
-                            action_status="READ_SUCCESS",
-                            action_message=f"[{intent.target_repo}] {intent.summary} 분석 완료",
-                            history_entry=f"- [{now_str[5:16]}] [📄 Tasks분석] {intent.summary} (#{trace_id[-4:]})",
-                            trace_id=trace_id,
-                        )
+                        if self.mode == "hybrid":
+                            output_str = (
+                                f"### 📄 [0-Tap Tasks 분석 보고서 요약]\n"
+                                f"- 대상 저장소: `{intent.target_repo}`\n"
+                                f"- 분석 주제: **{intent.summary}**\n\n"
+                                f"{result.get('preview', '')}\n\n"
+                                f"*(전체 보고서는 Google Drive의 `{result.get('doc_name')}` 문서에 저장되었습니다.)*"
+                            )
+                            self._sync_task_result_to_console(
+                                output_str=output_str,
+                                action_status="READ_SUCCESS",
+                                action_message=f"[{intent.target_repo}] {intent.summary} 분석 완료",
+                                history_entry=f"- [{now_str[5:16]}] [📄 Tasks분석] {intent.summary} (#{trace_id[-4:]})",
+                                trace_id=trace_id,
+                            )
 
                         report_text = result.get('report') or result.get('preview', '')
                         clean_preview = report_text.replace("```", "").replace("###", "").replace("##", "").replace("#", "").strip()
@@ -1137,34 +1141,39 @@ class GemBridgeDaemonV2:
                             f"[전체 보고서 안내]\n"
                             f"Google Drive: {result.get('doc_name')}"
                         )
+                        repo_short = intent.target_repo or "분석"
+                        summary_msg = intent.summary or "아키텍처 분석"
+                        rich_title = f"[✅완료: 분석] {repo_short} - {summary_msg}"[:120]
                         self.tasks_manager.update_task_with_feedback(
                             task_id=task_id,
                             is_success=True,
-                            title=task_title,
+                            title=rich_title,
                             feedback_notes=feedback_notes
                         )
 
                     elif intent.task_type == TaskType.WRITE:
                         result = self.write_executor.execute(repo_path, intent)
-                        commit_folder = self.storage_manager.get_destination_folder("commits") if self.storage_manager else self.folder_id
-                        doc_title = self.storage_manager.format_mobile_title(TaskType.WRITE, intent.target_repo, result.get('commit_message') or intent.summary) if self.storage_manager else task_title
-                        self._create_completion_doc(doc_title, result, parent_id=commit_folder)
-                        output_str = (
-                            f"### 🟢 [0-Tap Tasks Git 반영 완료]\n"
-                            f"- 대상 저장소: `{intent.target_repo}`\n"
-                            f"- 변경 파일: `{result.get('target_path')}`\n"
-                            f"- 커밋 메시지: `{result.get('commit_message')}`\n"
-                            f"- 커밋 해시: `{result.get('commit_hash')}` (origin/main 푸시 완료)\n\n"
-                            f"#### 주요 변경 내용 (Diff)\n"
-                            f"```diff\n{result.get('diff') or '(신규 파일)'}\n```"
-                        )
-                        self._sync_task_result_to_console(
-                            output_str=output_str,
-                            action_status="COMMIT_SUCCESS",
-                            action_message=f"커밋 `{result.get('commit_hash', '')[:7]}` 완료 ({intent.target_repo})",
-                            history_entry=f"- [{now_str[5:16]}] [🟢 Tasks커밋] {result.get('commit_message')} (#{trace_id[-4:]})",
-                            trace_id=trace_id,
-                        )
+                        if self.mode == "hybrid" or self.drive_backup:
+                            commit_folder = self.storage_manager.get_destination_folder("commits") if self.storage_manager else self.folder_id
+                            doc_title = self.storage_manager.format_mobile_title(TaskType.WRITE, intent.target_repo, result.get('commit_message') or intent.summary) if self.storage_manager else task_title
+                            self._create_completion_doc(doc_title, result, parent_id=commit_folder)
+                        if self.mode == "hybrid":
+                            output_str = (
+                                f"### 🟢 [0-Tap Tasks Git 반영 완료]\n"
+                                f"- 대상 저장소: `{intent.target_repo}`\n"
+                                f"- 변경 파일: `{result.get('target_path')}`\n"
+                                f"- 커밋 메시지: `{result.get('commit_message')}`\n"
+                                f"- 커밋 해시: `{result.get('commit_hash')}` (origin/main 푸시 완료)\n\n"
+                                f"#### 주요 변경 내용 (Diff)\n"
+                                f"```diff\n{result.get('diff') or '(신규 파일)'}\n```"
+                            )
+                            self._sync_task_result_to_console(
+                                output_str=output_str,
+                                action_status="COMMIT_SUCCESS",
+                                action_message=f"커밋 `{result.get('commit_hash', '')[:7]}` 완료 ({intent.target_repo})",
+                                history_entry=f"- [{now_str[5:16]}] [🟢 Tasks커밋] {result.get('commit_message')} (#{trace_id[-4:]})",
+                                trace_id=trace_id,
+                            )
 
                         commit_hash = result.get('commit_hash', '')
                         commit_hash_short = commit_hash[:7] if commit_hash else "local"
@@ -1180,32 +1189,40 @@ class GemBridgeDaemonV2:
                             f"[변경 내용 (Diff)]\n"
                             f"{diff_text}"
                         )
+                        target_file = result.get('target_path') or intent.target_path or intent.target_repo
+                        summary_msg = result.get('commit_message') or intent.summary or "코드 수정 완료"
+                        rich_title = f"[✅완료: {commit_hash_short}] {target_file} - {summary_msg}"[:120]
                         self.tasks_manager.update_task_with_feedback(
                             task_id=task_id,
                             is_success=True,
-                            title=task_title,
+                            title=rich_title,
                             feedback_notes=feedback_notes
                         )
 
                     elif intent.task_type == TaskType.EXEC:
-                        log_folder = self.storage_manager.get_destination_folder("logs") if self.storage_manager else self.folder_id
-                        doc_title = self.storage_manager.format_mobile_title(TaskType.EXEC, intent.target_repo, intent.summary or intent.exec_command) if self.storage_manager else task_title
+                        if self.mode == "hybrid" or self.drive_backup:
+                            log_folder = self.storage_manager.get_destination_folder("logs") if self.storage_manager else self.folder_id
+                            doc_title = self.storage_manager.format_mobile_title(TaskType.EXEC, intent.target_repo, intent.summary or intent.exec_command) if self.storage_manager else task_title
+                        else:
+                            log_folder = None
+                            doc_title = task_title
                         result = self.exec_executor.execute(repo_path, intent, original_title=doc_title, parent_id=log_folder)
-                        output_str = (
-                            f"### 💻 [0-Tap Tasks 명령 실행 완료]\n"
-                            f"- 대상 저장소: `{intent.target_repo}`\n"
-                            f"- 명령어: `{intent.exec_command}`\n"
-                            f"- 종료 코드: `{result.get('exit_code')}`\n\n"
-                            f"#### 실행 콘솔 출력\n"
-                            f"```text\n{(result.get('stdout', '') + chr(10) + result.get('stderr', '')).strip() or '(출력 없음)'}\n```"
-                        )
-                        self._sync_task_result_to_console(
-                            output_str=output_str,
-                            action_status="EXEC_SUCCESS" if result.get('exit_code') == 0 else "EXEC_ERROR",
-                            action_message=f"명령어 `{intent.exec_command}` 실행 완료 (code: {result.get('exit_code')})",
-                            history_entry=f"- [{now_str[5:16]}] [💻 Tasks실행] {intent.summary or intent.exec_command} (#{trace_id[-4:]})",
-                            trace_id=trace_id,
-                        )
+                        if self.mode == "hybrid":
+                            output_str = (
+                                f"### 💻 [0-Tap Tasks 명령 실행 완료]\n"
+                                f"- 대상 저장소: `{intent.target_repo}`\n"
+                                f"- 명령어: `{intent.exec_command}`\n"
+                                f"- 종료 코드: `{result.get('exit_code')}`\n\n"
+                                f"#### 실행 콘솔 출력\n"
+                                f"```text\n{(result.get('stdout', '') + chr(10) + result.get('stderr', '')).strip() or '(출력 없음)'}\n```"
+                            )
+                            self._sync_task_result_to_console(
+                                output_str=output_str,
+                                action_status="EXEC_SUCCESS" if result.get('exit_code') == 0 else "EXEC_ERROR",
+                                action_message=f"명령어 `{intent.exec_command}` 실행 완료 (code: {result.get('exit_code')})",
+                                history_entry=f"- [{now_str[5:16]}] [💻 Tasks실행] {intent.summary or intent.exec_command} (#{trace_id[-4:]})",
+                                trace_id=trace_id,
+                            )
 
                         exit_code = result.get('exit_code')
                         console_output = (result.get('stdout', '') + "\n" + result.get('stderr', '')).strip() or "(출력 없음)"
@@ -1220,10 +1237,14 @@ class GemBridgeDaemonV2:
                             f"[콘솔 출력]\n"
                             f"{console_output}"
                         )
+                        status_tag = "OK" if is_exec_ok else "실패"
+                        prefix = "✅완료" if is_exec_ok else "❌오류"
+                        cmd_summary = intent.summary or intent.exec_command or "명령 실행"
+                        rich_title = f"[{prefix}: {status_tag}] {intent.target_repo} - {cmd_summary}"[:120]
                         self.tasks_manager.update_task_with_feedback(
                             task_id=task_id,
                             is_success=is_exec_ok,
-                            title=task_title,
+                            title=rich_title,
                             feedback_notes=feedback_notes
                         )
 
@@ -1238,10 +1259,12 @@ class GemBridgeDaemonV2:
                         f"- 저장소 접근 권한(SSH 키) 또는 경로를 확인해 주세요.\n"
                         f"- 요청 명령어 또는 파일 경로가 유효한지 확인해 주세요."
                     )
+                    err_msg = str(task_err).split("\n")[0][:30]
+                    rich_title = f"[❌오류: 실패] {task_title} - {err_msg}"[:120]
                     self.tasks_manager.update_task_with_feedback(
                         task_id=task_id,
                         is_success=False,
-                        title=task_title,
+                        title=rich_title,
                         feedback_notes=error_feedback
                     )
 
@@ -1250,17 +1273,18 @@ class GemBridgeDaemonV2:
 
     def run_poll_cycle(self):
         """Executes a single polling and processing cycle."""
-        # 1. Check and process single bi-directional CONSOLE document
-        self.check_and_process_console()
+        # 1. Check and process single bi-directional CONSOLE document (hybrid mode only)
+        if self.mode == "hybrid":
+            self.check_and_process_console()
 
-        # 2. Check heartbeat (every 5 minutes of idle)
-        if time.time() - self._last_heartbeat_time > 300:
+        # 2. Check heartbeat (every 5 minutes of idle, hybrid mode only)
+        if self.mode == "hybrid" and (time.time() - self._last_heartbeat_time > 300):
             self._update_console_heartbeat()
             self._last_heartbeat_time = time.time()
 
         # 3. Periodic background janitor cleanup and task archiving (every 6 hours)
         if time.time() - self._last_janitor_run_time > 21600:
-            if self.janitor:
+            if self.janitor and (self.mode == "hybrid" or self.drive_backup):
                 try:
                     logger.info("[Janitor] Starting scheduled background cleanup cycle...")
                     self.janitor.clean_expired_documents()
@@ -1275,27 +1299,28 @@ class GemBridgeDaemonV2:
                     logger.warning(f"[Google Tasks] Stale archiving error: {t_err}")
             self._last_janitor_run_time = time.time()
 
-        # 4. Check Google Tasks for 0-Tap mobile tasks
+        # 4. Check Google Tasks for 0-Tap mobile tasks (always run)
         self.check_and_process_google_tasks()
 
-        # 5. Check legacy or ephemeral task documents
-        candidates = self.find_candidate_documents()
-        if candidates:
-            self._last_activity_time = time.time()
-            logger.info(f"Found {len(candidates)} candidate document(s).")
-            for doc in candidates:
-                parents = doc.get("parents") or []
-                parent_id = parents[0] if parents else None
-                self.process_single_task(
-                    doc_id=doc["id"],
-                    doc_name=doc.get("name", "Untitled"),
-                    doc_mime=doc.get("mimeType", "application/vnd.google-apps.document"),
-                    parent_id=parent_id
-                )
+        # 5. Check legacy or ephemeral task documents (hybrid mode only)
+        if self.mode == "hybrid":
+            candidates = self.find_candidate_documents()
+            if candidates:
+                self._last_activity_time = time.time()
+                logger.info(f"Found {len(candidates)} candidate document(s).")
+                for doc in candidates:
+                    parents = doc.get("parents") or []
+                    parent_id = parents[0] if parents else None
+                    self.process_single_task(
+                        doc_id=doc["id"],
+                        doc_name=doc.get("name", "Untitled"),
+                        doc_mime=doc.get("mimeType", "application/vnd.google-apps.document"),
+                        parent_id=parent_id
+                    )
 
     def start(self):
         """Runs the main polling dispatcher loop."""
-        logger.info(f"=== gem-bridge v{__version__} Dispatcher Daemon Started ===")
+        logger.info(f"=== gem-bridge v{__version__} Dispatcher Daemon Started (Mode: {self.mode}) ===")
         logger.info(
             f"Adaptive polling: Active={self.active_poll_interval}s, Idle={self.idle_poll_interval}s | Repositories: {list(self.repo_mapping.keys())}"
         )

@@ -1,4 +1,4 @@
-# gem-bridge (v2.1.11 Core Architecture)
+# gem-bridge (v2.1.12 Core Architecture)
 
 > **스마트폰의 Google Gemini 모바일 앱 및 Google Docs와 로컬/원격 Git 저장소를 유기적으로 연결하는 모듈형 에이전트 브리지 시스템**
 
@@ -98,5 +98,5 @@ python3 daemon_v2.py --once
 
 ## 🏷️ 버전 관리 정책
 
-- **현재 버전**: `v2.0.1` ([`core/__version__.py`](core/__version__.py), [`VERSION`](VERSION))
-- **버전 정책**: 사용자의 명시적 허락이 있기 전까지 메이저 버전(`v2.x.x` ➔ `v3.0.0`)은 엄격히 동결되며, 모든 업데이트는 마이너 및 패치(`v2.0.2`, `v2.1.0` 등) 단위로만 점진적으로 진행됩니다.
+- **현재 버전**: `v2.1.12` ([`core/__version__.py`](core/__version__.py), [`VERSION`](VERSION))
+- **버전 정책**: `v2.1` 고정 (Strict Versioning Rule: Major/Minor 고정, 3번째 자리 z만 업데이트 `v2.1.z`)
