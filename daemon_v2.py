@@ -13,7 +13,7 @@ from googleapiclient.http import MediaInMemoryUpload
 from google import genai
 
 from core import __version__
-from core.intent_analyzer import IntentAnalyzer, TaskType
+from core.intent_analyzer import IntentAnalyzer, IntentAnalysisResult, TaskType
 from core.repo_manager import RepoManager, RepoError
 from core.executor_read import ReadExecutor
 from core.executor_write import WriteExecutor, ProtectedFileError
@@ -79,6 +79,9 @@ class GemBridgeDaemonV2:
     def __init__(self, config: Optional[dict] = None):
         self.config = config or load_config()
         self.poll_interval = self.config.get("poll_interval_seconds", 5)
+        self.active_poll_interval: float = 1.0
+        self.idle_poll_interval: float = float(self.poll_interval)
+        self._last_activity_time: float = time.time()
         self.gemini_api_key = self.config.get("gemini_api_key", "")
         self.repo_mapping = self.config.get("repositories", {})
 
@@ -133,6 +136,12 @@ class GemBridgeDaemonV2:
         except (ValueError, AttributeError):
             pass
 
+    def get_sleep_interval(self) -> float:
+        """Returns 1.0s during active periods (within 5 minutes of activity), else idle interval."""
+        if time.time() - self._last_activity_time < 300:
+            return self.active_poll_interval
+        return self.idle_poll_interval
+
     def _find_or_create_folder(self) -> Optional[str]:
         if not self.drive_service:
             return None
@@ -180,11 +189,11 @@ class GemBridgeDaemonV2:
             return None
 
     def _init_console_doc(self) -> Optional[str]:
-        """Finds or creates the GeminiBridge/CONSOLE doc and marks it ONLINE."""
+        """Finds or creates the GeminiBridge/[최신결과] CONSOLE doc and marks it ONLINE."""
         if not self.drive_service:
             return None
         try:
-            q = "name = 'CONSOLE' and trashed = false"
+            q = "(name = '[최신결과] CONSOLE' or name = 'CONSOLE') and trashed = false"
             if self.folder_id:
                 q += f" and '{self.folder_id}' in parents"
             res = self.drive_service.files().list(q=q, fields="files(id, name, modifiedTime)").execute()
@@ -192,7 +201,20 @@ class GemBridgeDaemonV2:
 
             if files:
                 doc_id = files[0]["id"]
+                file_name = files[0].get("name", "")
                 self.console_doc_id = doc_id
+
+                # If legacy name 'CONSOLE', rename to '[최신결과] CONSOLE' for optimal Gemini Search matching
+                if file_name == "CONSOLE":
+                    try:
+                        self.drive_service.files().update(
+                            fileId=doc_id,
+                            body={"name": "[최신결과] CONSOLE"}
+                        ).execute()
+                        logger.info("Renamed legacy CONSOLE doc to '[최신결과] CONSOLE'.")
+                    except Exception as rename_err:
+                        logger.warning(f"Could not rename CONSOLE doc: {rename_err}")
+
                 # Read existing to preserve history/command, then update badge to ONLINE
                 try:
                     raw_content = self.drive_service.files().export_media(
@@ -200,27 +222,34 @@ class GemBridgeDaemonV2:
                     ).execute().decode("utf-8")
                     cmd = ConsoleProtocolParser.extract_command(raw_content) or DEFAULT_PLACEHOLDER
                     history = ConsoleProtocolParser.extract_history(raw_content)
+
+                    # Startup crash self-healing: if stuck in PROCESSING, recover to ONLINE
+                    recovered_msg = "*(PC 데몬이 정상 가동되었습니다. 아래 입력창에 작업을 입력하세요.)*"
+                    if "PROCESSING" in raw_content:
+                        logger.info("Auto-healing: Resetting previous zombie PROCESSING state to ONLINE.")
+                        recovered_msg = "*(시스템 재부팅: 이전 비정상 종료된 작업이 정리되고 ONLINE으로 자동 복구되었습니다.)*"
+
                     online_text = ConsoleDocFormatter.render(
                         status="ONLINE",
                         input_command=cmd,
-                        output_content="*(PC 데몬이 정상 가동되었습니다. 위 입력창에 작업을 입력하세요.)*",
+                        output_content=recovered_msg,
                         history_items=history
                     )
                     self._write_console_content(online_text)
                     self._last_console_content_hash = ConsoleProtocolParser.compute_content_hash(online_text)
-                    logger.info(f"Loaded existing GeminiBridge/CONSOLE doc: {doc_id} (Marked ONLINE)")
+                    logger.info(f"Loaded existing GeminiBridge/[최신결과] CONSOLE doc: {doc_id} (Marked ONLINE)")
                 except Exception as read_err:
                     logger.warning(f"Could not read/update existing CONSOLE doc: {read_err}")
                 return doc_id
 
-            # Create new CONSOLE doc
+            # Create new [최신결과] CONSOLE doc
             initial_text = ConsoleDocFormatter.render(
                 status="ONLINE",
                 input_command=DEFAULT_PLACEHOLDER,
-                output_content="*(gem-bridge v2 시스템이 시작되었습니다. 위 입력창에 작업을 입력하세요.)*"
+                output_content="*(gem-bridge v2 시스템이 시작되었습니다. 아래 입력창에 작업을 입력하세요.)*"
             )
             media = MediaInMemoryUpload(initial_text.encode("utf-8"), mimetype="text/plain")
-            body = {"name": "CONSOLE", "mimeType": "application/vnd.google-apps.document"}
+            body = {"name": "[최신결과] CONSOLE", "mimeType": "application/vnd.google-apps.document"}
             if self.folder_id:
                 body["parents"] = [self.folder_id]
             created = self.drive_service.files().create(
@@ -232,7 +261,7 @@ class GemBridgeDaemonV2:
             self.console_doc_id = doc_id
             self._last_console_modified_time = created.get("modifiedTime")
             self._last_console_content_hash = ConsoleProtocolParser.compute_content_hash(initial_text)
-            logger.info(f"Created new GeminiBridge/CONSOLE doc: {doc_id}")
+            logger.info(f"Created new GeminiBridge/[최신결과] CONSOLE doc: {doc_id}")
             return doc_id
         except Exception as e:
             logger.warning(f"Could not initialize CONSOLE document: {e}")
@@ -389,6 +418,7 @@ class GemBridgeDaemonV2:
                 self._last_console_modified_time = modified_time
                 return
 
+            self._last_activity_time = time.time()
             trace_id = TimeTagFormatter.generate_trace_id()
             sync_lag_ms = TimeTagFormatter.calculate_sync_lag_ms(modified_time)
             profiler = PipelineProfiler(trace_id=trace_id)
@@ -411,14 +441,47 @@ class GemBridgeDaemonV2:
                 )
                 self._write_console_content(proc_text)
 
-            # 7. Analyze Intent
-            with profiler.step("intent_llm"):
-                available_repos = list(self.repo_manager.repo_mapping.keys())
-                intent = self.intent_analyzer.analyze(
-                    raw_text=cmd,
-                    title=cmd,
-                    available_repos=available_repos
+            # 7. Analyze Intent (Fast-Path Regex or Gemini LLM)
+            intent = None
+            if self._is_janitor_command(cmd):
+                intent = IntentAnalysisResult(
+                    task_type=TaskType.EXEC,
+                    target_repo="gem-bridge",
+                    summary=cmd,
+                    exec_command=cmd,
+                    reasoning="Fast-path: Maintenance/Janitor command"
                 )
+            elif cmd.startswith("!실행 ") or cmd.startswith("!exec "):
+                exec_cmd = cmd.split(None, 1)[1].strip()
+                intent = IntentAnalysisResult(
+                    task_type=TaskType.EXEC,
+                    target_repo="gem-bridge",
+                    summary=exec_cmd,
+                    exec_command=exec_cmd,
+                    reasoning="Fast-path: Shell execution prefix"
+                )
+            elif (cmd.startswith("!분석 ") or cmd.startswith("!analyze ")) and len(cmd.split()) >= 2:
+                parts = cmd.split(None, 2)
+                cand_repo = parts[1].strip()
+                available_repos = list(self.repo_manager.repo_mapping.keys())
+                if cand_repo in available_repos or cand_repo.startswith("http"):
+                    summary_part = parts[2].strip() if len(parts) > 2 else f"{cand_repo} 분석"
+                    intent = IntentAnalysisResult(
+                        task_type=TaskType.READ,
+                        target_repo=cand_repo,
+                        summary=summary_part,
+                        query=summary_part,
+                        reasoning="Fast-path: Structured read command"
+                    )
+
+            if not intent:
+                with profiler.step("intent_llm"):
+                    available_repos = list(self.repo_manager.repo_mapping.keys())
+                    intent = self.intent_analyzer.analyze(
+                        raw_text=cmd,
+                        title=cmd,
+                        available_repos=available_repos
+                    )
             logger.info(
                 f"[{trace_id}][CONSOLE Intent] Type: {intent.task_type.value} | TargetRepo: {intent.target_repo} | Summary: {intent.summary}"
             )
@@ -513,9 +576,27 @@ class GemBridgeDaemonV2:
 
             # 10. Render final ONLINE state with result and telemetry
             with profiler.step("drive_update"):
+                # Non-Destructive Overwrite Guard:
+                # Check if user typed a NEW command while previous task was running
+                input_cmd_to_render = DEFAULT_PLACEHOLDER
+                try:
+                    current_raw = self._read_console_content()
+                    if current_raw:
+                        current_cmd = ConsoleProtocolParser.extract_command(current_raw)
+                        if current_cmd:
+                            current_cmd_hash = ConsoleProtocolParser.compute_command_hash(current_cmd)
+                            if current_cmd_hash != cmd_hash:
+                                logger.info(
+                                    f"[{trace_id}][CONSOLE Guard] Preserving new user command typed during execution: '{current_cmd}'"
+                                )
+                                input_cmd_to_render = current_cmd
+                                self._last_activity_time = time.time()
+                except Exception as guard_err:
+                    logger.warning(f"Could not check CONSOLE before final render: {guard_err}")
+
                 done_text = ConsoleDocFormatter.render(
                     status="ONLINE",
-                    input_command=DEFAULT_PLACEHOLDER,
+                    input_command=input_cmd_to_render,
                     output_content=output_str,
                     history_items=history,
                     trace_id=trace_id,
@@ -527,6 +608,7 @@ class GemBridgeDaemonV2:
                 self._write_console_content(done_text)
 
             self._last_processed_command_hash = cmd_hash
+            self._last_activity_time = time.time()
 
             self._update_status(
                 f"# ✅ [작업 완료 (CONSOLE)] {intent.summary}\n\n"
@@ -583,10 +665,14 @@ class GemBridgeDaemonV2:
                 history.insert(0, history_entry)
                 history = history[:3]
 
+            # Preserve pending input command if user typed one
+            pending_cmd = ConsoleProtocolParser.extract_command(current_text) if current_text else None
+            input_cmd_to_render = pending_cmd if pending_cmd else DEFAULT_PLACEHOLDER
+
             tid = trace_id or f"tsk_{int(time.time())}"
             updated_text = ConsoleDocFormatter.render(
                 status="ONLINE",
-                input_command=DEFAULT_PLACEHOLDER,
+                input_command=input_cmd_to_render,
                 output_content=output_str,
                 history_items=history,
                 trace_id=tid,
@@ -595,7 +681,8 @@ class GemBridgeDaemonV2:
                 action_message=action_message,
             )
             self._write_console_content(updated_text)
-            self._last_processed_command_hash = ConsoleProtocolParser.compute_command_hash(DEFAULT_PLACEHOLDER)
+            self._last_processed_command_hash = ConsoleProtocolParser.compute_command_hash(input_cmd_to_render)
+            self._last_activity_time = time.time()
             logger.info("Successfully synced task document result to CONSOLE.")
         except Exception as e:
             logger.warning(f"Could not sync task document result to CONSOLE: {e}")
@@ -668,7 +755,7 @@ class GemBridgeDaemonV2:
             if file_id == self.console_doc_id or file_id == self.status_doc_id:
                 continue
 
-            if file_name in ("CONSOLE", "STATUS"):
+            if file_name in ("CONSOLE", "STATUS", "[최신결과] CONSOLE"):
                 continue
 
             if any(file_name.startswith(p) for p in self.SYSTEM_DOC_PREFIXES):
@@ -972,6 +1059,7 @@ class GemBridgeDaemonV2:
         # 4. Check legacy or ephemeral task documents
         candidates = self.find_candidate_documents()
         if candidates:
+            self._last_activity_time = time.time()
             logger.info(f"Found {len(candidates)} candidate document(s).")
             for doc in candidates:
                 parents = doc.get("parents") or []
@@ -986,7 +1074,9 @@ class GemBridgeDaemonV2:
     def start(self):
         """Runs the main polling dispatcher loop."""
         logger.info(f"=== gem-bridge v{__version__} Dispatcher Daemon Started ===")
-        logger.info(f"Polling interval: {self.poll_interval}s | Repositories: {list(self.repo_mapping.keys())}")
+        logger.info(
+            f"Adaptive polling: Active={self.active_poll_interval}s, Idle={self.idle_poll_interval}s | Repositories: {list(self.repo_mapping.keys())}"
+        )
 
         while True:
             try:
@@ -994,7 +1084,7 @@ class GemBridgeDaemonV2:
             except Exception as loop_error:
                 logger.error(f"Error in daemon polling loop: {loop_error}")
                 logger.error(traceback.format_exc())
-            time.sleep(self.poll_interval)
+            time.sleep(self.get_sleep_interval())
 
 
 def main():

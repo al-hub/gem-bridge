@@ -40,6 +40,7 @@ class ReadExecutor:
         Executes a READ task without any repository modifications or git push.
         Gathers codebase context, generates report via Gemini, and uploads new Google Doc.
         """
+        repo_path = Path(repo_path)
         logger.info(f"[READ Executor] Starting read analysis on repo: {repo_path}")
 
         # 1. Gather repository context
@@ -50,7 +51,10 @@ class ReadExecutor:
 
         # 3. Create Google Doc on Google Drive
         clean_title = self._clean_doc_title(original_title or intent.summary)
-        doc_name = f"[보고서] {clean_title}"
+        if clean_title.startswith("[📄분석:"):
+            doc_name = clean_title
+        else:
+            doc_name = f"[보고서] {clean_title}"
 
         created_doc = self._upload_to_drive(doc_name, report_content, parent_id=parent_id)
         doc_id = created_doc.get("id", "")

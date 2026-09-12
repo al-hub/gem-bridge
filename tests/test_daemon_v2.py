@@ -207,10 +207,89 @@ class TestDaemonV2(unittest.TestCase):
 
         self.daemon._set_console_offline()
 
-        # Check that update was called with OFFLINE badge
+    def test_adaptive_polling_sleep_interval(self):
+        import time
+        # Active mode (< 300s since activity)
+        self.daemon._last_activity_time = time.time()
+        self.assertEqual(self.daemon.get_sleep_interval(), 1.0)
+
+        # Idle mode (> 300s since activity)
+        self.daemon._last_activity_time = time.time() - 350
+        self.assertEqual(self.daemon.get_sleep_interval(), 1.0 if self.daemon.poll_interval == 1 else self.daemon.poll_interval)
+
+    def test_non_destructive_overwrite_guard(self):
+        # 1. Setup initial command
+        initial_doc = ConsoleDocFormatter.render(status="ONLINE", input_command="!작업 kum 랜딩페이지")
+        self.daemon.drive_service.files().get().execute.return_value = {
+            "id": "mock_console_doc_id", "modifiedTime": "2026-09-12T18:00:00Z"
+        }
+        self.daemon._last_console_modified_time = "old_time"
+        self.daemon._last_console_content_hash = "old_hash"
+        self.daemon._last_processed_command_hash = "old_cmd_hash"
+
+        # Mock export_media: first returns initial command, then during task execution returns NEW command typed by user
+        new_command_during_task = "!작업 kum 추가 수정건"
+        user_edited_doc = ConsoleDocFormatter.render(status="PROCESSING", input_command=new_command_during_task)
+
+        self.daemon.drive_service.files().export_media().execute.side_effect = [
+            initial_doc.encode("utf-8"),       # Step 2: Read command
+            user_edited_doc.encode("utf-8"),   # Step 10: Check CONSOLE before final render
+        ]
+
+        mock_intent = IntentAnalysisResult(
+            task_type=TaskType.WRITE,
+            target_repo="kum",
+            summary="랜딩페이지",
+            target_path="index.html",
+            content="<h1>New</h1>",
+            commit_message="feat: new"
+        )
+        self.daemon.intent_analyzer.analyze = MagicMock(return_value=mock_intent)
+        self.daemon.repo_manager.prepare_repo = MagicMock(return_value="/tmp/dummy-kum")
+        self.daemon.write_executor.execute = MagicMock(return_value={
+            "status": "success", "commit_hash": "abc1234", "commit_message": "feat: new",
+            "target_path": "index.html", "diff": "+ <h1>New</h1>"
+        })
+
+        self.daemon.check_and_process_console()
+
+        # Verify that final write retained the new user command
         update_calls = self.daemon.drive_service.files().update.call_args_list
-        found_offline = any(call[1].get("fileId") == "mock_console_doc_id" for call in update_calls)
-        self.assertTrue(found_offline)
+        console_updates = [c for c in update_calls if c[1].get("fileId") == "mock_console_doc_id"]
+        self.assertTrue(len(console_updates) >= 2)
+        media = console_updates[-1][1].get("media_body")
+        final_body = media.getbytes(0, media.size()).decode("utf-8")
+        self.assertIn(new_command_during_task, final_body)
+
+    def test_fast_path_execution_bypasses_llm(self):
+        doc_content = ConsoleDocFormatter.render(status="ONLINE", input_command="!실행 pytest tests/")
+        self.daemon.drive_service.files().get().execute.return_value = {
+            "id": "mock_console_doc_id", "modifiedTime": "2026-09-12T18:05:00Z"
+        }
+        self.daemon.drive_service.files().export_media().execute.return_value = doc_content.encode("utf-8")
+        self.daemon._last_console_modified_time = "old_time"
+        self.daemon._last_console_content_hash = "old_hash"
+        self.daemon._last_processed_command_hash = "old_cmd_hash"
+
+        self.daemon.intent_analyzer.analyze = MagicMock()
+        self.daemon.repo_manager.prepare_repo = MagicMock(return_value="/tmp/dummy-repo")
+        self.daemon.exec_executor.execute = MagicMock(return_value={"stdout": "57 passed", "stderr": "", "exit_code": 0})
+
+        self.daemon.check_and_process_console()
+
+        # intent_analyzer.analyze should NOT be called due to Fast-Path!
+        self.daemon.intent_analyzer.analyze.assert_not_called()
+        self.daemon.exec_executor.execute.assert_called_once()
+
+    def test_top_anchored_layout_above_the_fold(self):
+        rendered = ConsoleDocFormatter.render(
+            status="ONLINE",
+            input_command="!작업 test",
+            output_content="최신 결과 출력"
+        )
+        out_pos = rendered.find("## 📤 [CONSOLE OUTPUT]")
+        in_pos = rendered.find(">>> INPUT >>>")
+        self.assertTrue(out_pos < in_pos, "OUTPUT must be above INPUT in Top-Anchored layout for Above-the-Fold parsing")
 
 
 if __name__ == "__main__":

@@ -10,6 +10,8 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 
+CONSOLE_DOC_NAME = "[최신결과] CONSOLE"
+LEGACY_CONSOLE_DOC_NAME = "CONSOLE"
 INPUT_START_TAG = ">>> INPUT >>>"
 INPUT_END_TAG = "<<< END <<<"
 OUTPUT_SECTION_HEADER = "## 📤 [CONSOLE OUTPUT]"
@@ -101,9 +103,9 @@ class ConsoleProtocolParser:
                 return candidate
             return None
 
-        # 3. Fallback: Tag opened with >>> INPUT >>> but missing end tag before delimiter or OUTPUT header
+        # 3. Fallback: Tag opened with >>> INPUT >>> but missing end tag before delimiter or next section header
         pattern_missing_end = re.compile(
-            r"(?:\*{0,2}|`{0,3})>>>\s*INPUT\s*>>>(?:\*{0,2}|`{0,3})\s*\n?(.*?)(?=(?:═{5,}|##\s*📤|##\s*\[CONSOLE\s*OUTPUT\]|\Z))",
+            r"(?:\*{0,2}|`{0,3})>>>\s*INPUT\s*>>>(?:\*{0,2}|`{0,3})\s*\n?(.*?)(?=(?:═{5,}|##\s*📜|##\s*\[HISTORY\]|##\s*📤|##\s*\[CONSOLE\s*OUTPUT\]|\Z))",
             re.DOTALL | re.IGNORECASE
         )
         match_missing_end = pattern_missing_end.search(normalized)
@@ -113,15 +115,20 @@ class ConsoleProtocolParser:
                 return candidate
             return None
 
-        # 4. Ultra-tolerant Fallback: User wiped out tags and typed command at top
+        # 4. Fallback: Tag erased by user but typed near [명령어 입력창]
+        if "명령어 입력창" in normalized:
+            after_prompt = normalized.split("명령어 입력창", 1)[1]
+            for line in after_prompt.split("\n")[:10]:
+                line_s = line.strip().strip(">").strip("=").strip()
+                if line_s.startswith("!") or line_s.startswith("{") or any(k in line_s for k in ("gem-bridge", "kum", "tetris-loop")):
+                    if not cls.is_placeholder(line_s) and not line_s.startswith("#"):
+                        return line_s
+
+        # 5. Ultra-tolerant Fallback: User wiped out tags and typed command at top
         lines = normalized.split("\n")
         non_empty = [l.strip() for l in lines if l.strip()]
-        for line in non_empty[:5]:
-            # Stop if we hit output section
-            if "CONSOLE OUTPUT" in line or line.startswith("## 📤"):
-                break
-            # Check for command prefix or JSON
-            if line.startswith("!") or line.startswith("{") or "gem-bridge" in line or "kum" in line or "tetris-loop" in line:
+        for line in non_empty[:8]:
+            if line.startswith("!") or line.startswith("{"):
                 if not cls.is_placeholder(line) and not line.startswith("#"):
                     return line
 
@@ -212,11 +219,12 @@ class ConsoleDocFormatter:
     ) -> str:
         """
         Renders the complete markdown text for CONSOLE Google Doc.
-        Optimized for smartphone Google Docs layout with telemetry metadata and action status banners.
+        Top-Anchored layout for mobile: Output & Action Banner at the very top (Above-the-Fold)
+        so Gemini Workspace tool reads the latest result on the first snippet window.
         """
         badge = cls.make_status_badge(status, timestamp_str)
         cmd_text = (input_command or DEFAULT_PLACEHOLDER).strip()
-        out_text = (output_content or "*(아직 실행된 결과가 없습니다. 위 입력창에 작업을 입력하세요.)*").strip()
+        out_text = (output_content or "*(아직 실행된 결과가 없습니다. 아래 입력창에 작업을 입력하세요.)*").strip()
 
         # Action banner
         action_banner = cls.make_action_banner(action_status, action_message)
@@ -244,17 +252,17 @@ class ConsoleDocFormatter:
         if status.upper() == "OFFLINE":
             offline_notice = "> 💡 **안내**: 현재 PC가 꺼져 있습니다. 입력창에 작업을 적어두시면 PC가 켜질 때 자동으로 실행됩니다.\n\n"
 
+        # Top-Anchored Layout: Output at the top, Input below
         doc_content = f"""# 📱 gem-bridge CONSOLE        [{badge}]
 {DELIMITER_LINE}
-{offline_notice}▼ **[명령어 입력창]** (수정 후 3초 내 자동 실행됩니다)
-{INPUT_START_TAG}
-{cmd_text}
-{INPUT_END_TAG}
-{DELIMITER_LINE}
-
 {OUTPUT_SECTION_HEADER}
 {action_banner}{meta_bar}{out_text}
 
+{DELIMITER_LINE}
+{offline_notice}▼ **[명령어 입력창]** (수정 후 1~3초 내 자동 실행됩니다)
+{INPUT_START_TAG}
+{cmd_text}
+{INPUT_END_TAG}
 {DELIMITER_LINE}
 
 {HISTORY_SECTION_HEADER} (최근 3개)

@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.6] - 2026-09-12
+
+### Added
+- **Gemini Mobile All-in-One Deterministic Protocol (`docs/MOBILE_GEM_PROTOCOL.md`)**:
+  - Full production-ready system instructions for custom Google Gemini Gem to prevent Tool Call Drops and eliminate Zombie Loops.
+  - Zero-Token Output Gate: Prohibits text emission prior to actual Google Workspace tool invocation.
+  - Fast-Fail FSM: Immediate failure response (`⚠️ [등록된 작업 없음]`) on "결과 알려줘" when CONSOLE is idle, cutting zombie loops at turn 1.
+  - In-Chat Diff Viewer: Delivers formatted code diffs directly within the Gemini mobile chat thread without external app navigation.
+- **Single Source of Truth (SSOT) Anchor & Top-Anchored Layout (`core/console_protocol.py`)**:
+  - Renamed singleton document to `[최신결과] CONSOLE` for instant BM25 lexical keyword matching during Gemini mobile search queries (`"결과 알려줘"`, `"최신 상태"`).
+  - Above-the-Fold Optimization: Reordered layout to place `## 📤 [CONSOLE OUTPUT]` and action banners at the very top of the document so mobile Gemini parses results on the first 1KB snippet.
+- **Adaptive Dual-Rate Polling & Fast-Path Routing (`daemon_v2.py`)**:
+  - Active burst polling at 1.0s interval during user interaction (< 5min of activity), reducing end-to-end command latency to 2~3s.
+  - Fast-Path Regex routing: Directly executes `!실행 <cmd>`, `!분석 <repo> <query>`, and janitor commands in 0ms without Gemini LLM roundtrip.
+  - Non-Destructive Overwrite Guard: Prevents silent data loss by verifying if a user typed a new command during task execution before resetting the input area.
+  - Boot-time crash auto-healing: Automatically recovers zombie `PROCESSING` states to `ONLINE` on daemon restart.
+- **Test Suite Expansion**:
+  - 61 unit tests passing across all components, including new tests for adaptive polling, non-destructive guard, fast-path routing, and top-anchored layout.
+
 ## [2.1.5] - 2026-09-12
 
 ### Added
