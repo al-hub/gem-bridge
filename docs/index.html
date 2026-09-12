@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>gem-bridge 공식 문서</title>
+  <title>gem-bridge 공식 문서 (Google Tasks Edition)</title>
   <style>
     :root {
       --primary: #2563eb;
@@ -15,6 +15,7 @@
       --border: #e2e8f0;
       --code-bg: #0f172a;
       --code-text: #e2e8f0;
+      --accent: #10b981;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -159,6 +160,16 @@
       color: inherit;
     }
     .alert {
+      background: #f0fdf4;
+      border-left: 4px solid var(--accent);
+      padding: 0.9rem 1.1rem;
+      font-size: 0.875rem;
+      color: #166534;
+      border-radius: 4px;
+      line-height: 1.5;
+    }
+    .alert strong { color: #14532d; }
+    .alert-warn {
       background: #fffbeb;
       border-left: 4px solid #f59e0b;
       padding: 0.9rem 1.1rem;
@@ -167,7 +178,6 @@
       border-radius: 4px;
       line-height: 1.5;
     }
-    .alert strong { color: #78350f; }
     ul, ol {
       padding-left: 1.4rem;
       font-size: 0.925rem;
@@ -209,13 +219,13 @@
 <body>
   <header>
     <div class="nav-container">
-      <a href="#" class="brand">gem-bridge <span class="badge">Pipeline v1.0</span></a>
+      <a href="#" class="brand">gem-bridge <span class="badge">Google Tasks v2.0</span></a>
       <nav>
         <a href="#overview">개요</a>
         <a href="#docs">문서</a>
         <a href="#architecture">동작구조</a>
         <a href="#setup">설치 및 설정</a>
-        <a href="#usage">사용법</a>
+        <a href="#usage">모바일 사용법</a>
         <a href="#maintenance">유지보수</a>
       </nav>
     </div>
@@ -225,22 +235,22 @@
     <section id="overview">
       <h1>프로젝트 개요 및 목적 (Project Purpose)</h1>
       <p style="color: #475569; font-size: 1.05rem;">
-        <strong>gem-bridge</strong>는 모바일 Gemini 앱이나 Google Drive 동기화 폴더에서 발행된 태스크 명세를 실시간 감지하여,
-        로컬 워크스페이스(WSL2) 환경의 코드를 안전하게 반영하고 원격 Git 저장소에 자동 Commit & Push를 수행하는
-        <strong>Google Workspace ↔ Git 자동화 파이프라인 데몬</strong>입니다.
+        <strong>gem-bridge</strong>는 모바일 Gemini 앱(Google Tasks 확장 프로그램) 및 스마트폰 Google Tasks 앱에서 발행된 태스크 명세를 실시간 감지하여, 
+        로컬 워크스페이스(WSL2/Linux) 환경의 코드를 안전하게 반영하고 원격 Git 저장소에 자동 Commit & Push를 수행하는 
+        <strong>Google Tasks API 기반 비동기 자동화 파이프라인 데몬</strong>입니다.
       </p>
       <div class="grid-3">
         <div class="card">
-          <div class="card-title" style="color: var(--primary);">모바일 원격 주도 개발</div>
-          <div class="card-desc">PC 환경에 직접 접속하지 않고도 모바일 Gemini 앱으로 태스크 파일을 드라이브에 생성하여 자동 코드 수정 및 Push를 수행합니다.</div>
+          <div class="card-title" style="color: var(--primary);">Google Tasks 전환</div>
+          <div class="card-desc">기존 Google Drive 가상 파일(.gdoc)의 WSL I/O 동기화 병목과 인코딩 지연 문제를 근본적으로 극복하기 위해 공식 Tasks API 기반의 실시간 트래킹 구조로 전환되었습니다.</div>
         </div>
         <div class="card">
-          <div class="card-title" style="color: var(--primary);">안정적인 백그라운드 상주</div>
-          <div class="card-desc">Linux systemd 서비스 데몬으로 등록되어 파일 I/O 이벤트(Polling Loop / Inotify)를 무중단 감시합니다.</div>
+          <div class="card-title" style="color: var(--primary);">모바일 최적화 & Gemini 연동</div>
+          <div class="card-desc">스마트폰 구글 할 일 위젯, 캘린더 연동 및 Google Gemini 앱에 "할 일 추가해줘"라고 직접 음성/텍스트로 명령하여 신속히 코드를 변경할 수 있습니다.</div>
         </div>
         <div class="card">
-          <div class="card-title" style="color: var(--primary);">무결성 및 격리 아카이빙</div>
-          <div class="card-desc">가상 파일(.gdoc) 필터링, 에러 방지 처리 및 완료된 작업 파일의 <code>processed/</code> 자동 이동으로 멱등성을 보장합니다.</div>
+          <div class="card-title" style="color: var(--primary);">고신뢰성 아키텍처</div>
+          <div class="card-desc">작업 반영 성공 시 해당 태스크를 '완료(Completed)' 상태로 자동 토글하여 멱등성을 완벽히 보장하고, 변경된 코드 스냅샷을 원격 저장소에 즉각 Push합니다.</div>
         </div>
       </div>
     </section>
@@ -254,11 +264,11 @@
         </a>
         <a href="https://github.com/al-hub/gem-bridge/blob/main/docs/guide.md" class="card" target="_blank" rel="noopener noreferrer">
           <div class="card-title">docs/guide.md ↗</div>
-          <div class="card-desc">아키텍처 명세, 모바일 최적화 규칙, 장애 복구 가이드</div>
+          <div class="card-desc">Google Tasks 전환 세부 설계, 모바일 최적화 규칙, 장애 복구 가이드</div>
         </a>
         <a href="https://github.com/al-hub/gem-bridge/blob/main/docs/verification.md" class="card" target="_blank" rel="noopener noreferrer">
           <div class="card-title">docs/verification.md ↗</div>
-          <div class="card-desc">모바일 Gemini ↔ 데몬 ↔ Git 파이프라인 연동 실증 및 검증 내역</div>
+          <div class="card-desc">모바일 Gemini ↔ Google Tasks ↔ 로컬 데몬 ↔ Git 파이프라인 연동 검증 보고서</div>
         </a>
       </div>
     </section>
@@ -266,22 +276,23 @@
     <section id="architecture">
       <h2>전체 동작 구조 및 아키텍처 (Architecture)</h2>
       <p style="font-size: 0.95rem; color: #475569;">
-        gem-bridge는 모바일 입력 계층, 동기화 감시 계층, 코드 처리 계층, Git 버전 관리 계층으로 분리된 비동기 이벤트 파이프라인 구조를 갖습니다.
+        gem-bridge는 모바일 Google Tasks 입력을 기점으로 데몬의 폴링, 코드 주입 엔진, Git 형상 제어 컴포넌트로 구성된 이벤트 루프 기반 파이프라인으로 동작합니다.
       </p>
       <pre>
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                          1. 모바일 / Gemini 클라이언트                      │
-│       - 스마트폰 Gemini 앱 또는 Google Drive 웹/앱에서 작업 명세 작성       │
+│                       1. 모바일 / Gemini 클라이언트 계층                     │
+│    - 모바일 Google Tasks 위젯/앱 또는 Gemini Voice 명령으로 태스크 생성     │
+│    - 제목 형식: "[gem-bridge] 대상파일명" / 본문: 적용할 소스코드 또는 지시   │
 └──────────────────────────────────────┬──────────────────────────────────────┘
-                                       │ Cloud Sync (Google Drive Desktop)
+                                       │ Google Tasks API Sync (Cloud)
                                        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                2. 마운트 폴더 감시 (WSL /mnt/g/.../GeminiBridge/)           │
+│                 2. Google Tasks API 폴링 및 이벤트 감시 계층                 │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
 │   │                   gem-bridge 데몬 (bridge_daemon)                   │   │
-│   │   - 파일 이벤트 감시 (Polling Loop / File Watcher)                  │   │
-│   │   - .gdoc 가상 링크 파일 필터링 ([Errno 5] 방지)                    │   │
-│   │   - 실질 텍스트 파일(.txt, .md, .json) 파싱 및 명령 추출            │   │
+│   │   - Google API 클라이언트 인증 처리 (credentials.json & token.json)  │   │
+│   │   - 미완료 태스크 목록 정기적 Polling 조회 (Status: needsAction)     │   │
+│   │   - 프리픽스 "[gem-bridge]" 매칭 검증 및 명령 메타데이터 추출       │   │
 │   └──────────────────────────────────┬──────────────────────────────────┘   │
 └──────────────────────────────────────┼──────────────────────────────────────┘
                                        │
@@ -289,20 +300,21 @@
               ▼                                                 ▼
 ┌─────────────────────────────────┐           ┌───────────────────────────────┐
 │     3. 로컬 소스코드 작업 반영  │           │      4. Git 자동화 파이프라인 │
-│ - 타깃 저장소 소스 파일 수정    │           │ - 변경 파일 인덱싱 (git add)  │
-│ - 템플릿 생성 및 리팩토링 검증  │           │ - 유의미한 커밋 생성 및 Push  │
+│ - 타깃 저장소 대상 파일 자동 수정 │           │ - 변경 파일 인덱싱 (git add)  │
+│ - 구문 분석 및 코드 교체 적용     │           │ - 정밀한 커밋 메시지 생성/Push│
 └────────────────┬────────────────┘           └───────────────┬───────────────┘
                  │                                             │
                  └──────────────────────┬──────────────────────┘
                                         ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                        5. 태스크 완결 및 안전 아카이빙                      │
-│            - 처리 완료된 명세 파일을 GeminiBridge/processed/ 폴더로 이동     │
+│                       5. 태스크 트래킹 완결 및 상태 전환                    │
+│            - 처리 완료된 구글 할 일을 'Completed' 상태로 업데이트           │
+│            - 다음 루프에서의 중복 실행 및 무한 루프 원천 방지               │
 └─────────────────────────────────────────────────────────────────────────────┘
       </pre>
 
       <div class="alert">
-        <strong>WSL 마운트 I/O 주의사항:</strong> Google Drive Desktop이 생성하는 <code>.gdoc</code> 포인터 파일은 Linux 환경에서 직접 읽을 시 <code>[Errno 5] Input/output error</code>가 발생할 수 있습니다. <strong>gem-bridge</strong>는 이를 자동 감지 및 건너뛰며, 실제 텍스트 내용(<code>.txt</code>, <code>.md</code>, <code>.json</code>)만 안전하게 수집합니다.
+        <strong>Google Tasks API 전환의 이점:</strong> 파일 동기화 지연 및 드라이브 동기화 오버헤드가 없으며, 파일 시스템 쓰기 오류(I/O Error)가 발생하지 않아 모바일-데몬 간 응답 속도가 대폭 향상되었습니다.
       </div>
     </section>
 
@@ -311,9 +323,9 @@
       
       <h3>1) 사전 준비 사항</h3>
       <ul>
-        <li><strong>운영체제:</strong> Windows WSL2 (Ubuntu 20.04/22.04 LTS 이상)</li>
-        <li><strong>연동 드라이브:</strong> Windows Google Drive for Desktop 실행 및 WSL 마운트 경로 확인 (예: <code>/mnt/g/My Drive/GeminiBridge/</code>)</li>
-        <li><strong>런타임:</strong> Python 3.10 이상 및 Git SSH/PAT 인증 완료 환경</li>
+        <li><strong>운영체제:</strong> Windows WSL2 (Ubuntu 20.04/22.04 LTS 이상) 또는 Native Linux</li>
+        <li><strong>Google API 활성화:</strong> Google Cloud Console에서 Google Tasks API 활성화 및 Desktop 애플리케이션 유형의 OAuth 클라이언트 자격증명 생성</li>
+        <li><strong>자격증명 파일 보관:</strong> 다운로드한 JSON 파일을 프로젝트 루트 디렉터리에 <code>credentials.json</code>으로 저장</li>
       </ul>
 
       <h3 style="margin-top: 1rem;">2) 소스 클론 및 종속성 설치</h3>
@@ -321,68 +333,91 @@
 git clone https://github.com/al-hub/gem-bridge.git ~/workspace/gem-bridge
 cd ~/workspace/gem-bridge
 
-# 가상환경(선택) 또는 필수 패키지 설치
+# Google API 종속 라이브러리 및 패키지 설치
 pip install -r requirements.txt</pre>
 
-      <h3 style="margin-top: 1rem;">3) 설정 파일 및 폴더 구조 준비</h3>
-      <pre># 예제 설정 복사 및 실제 경로 수정
-cp config.example.json config.json
+      <h3 style="margin-top: 1rem;">3) 설정 파일 작성</h3>
+      <p style="font-size: 0.9rem; margin-bottom: 0.5rem;"><code>config.json</code> 파일을 프로젝트 루트 디렉터리에 생성하고 아래와 같이 타깃 저장소 경로와 폴링 주기를 기입합니다.</p>
+      <pre>{
+  "workspace_path": "/home/user/workspace/target-project",
+  "polling_interval_seconds": 15,
+  "default_branch": "main",
+  "task_list_id": "@default"
+}</pre>
 
-# 감시할 Google Drive 폴더 및 아카이브 경로 생성
-mkdir -p "/mnt/g/My Drive/GeminiBridge/processed"</pre>
+      <h3 style="margin-top: 1rem;">4) 최초 구동 및 OAuth 최초 인증</h3>
+      <pre># 터미널에서 최초 직접 실행하여 웹 브라우저를 통한 Google Tasks 권한 부여 완료
+python src/main.py
 
-      <h3 style="margin-top: 1rem;">4) systemd 데몬 등록 및 실행</h3>
-      <pre># 서비스 파일 시스템 등록
+# 인증이 정상 완료되면 프로젝트 루트에 token.json 파일이 자동으로 생성됩니다.</pre>
+
+      <h3 style="margin-top: 1rem;">5) systemd 백그라운드 서비스 등록</h3>
+      <pre># 서비스 파일 등록 및 시작
 sudo cp gem-bridge.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now gem-bridge.service
 
-# 데몬 구동 상태 및 실시간 로그 모니터링
+# 서비스 상태 확인 및 로그 추적
 sudo systemctl status gem-bridge.service
 journalctl -u gem-bridge.service -f</pre>
     </section>
 
     <section id="usage">
-      <h2>사용 방법 및 워크플로우 (Usage Workflow)</h2>
+      <h2>모바일 사용법 및 실전 가이드 (Mobile Usage Guide)</h2>
+      <p style="font-size: 0.95rem; color: #475569;">
+        모바일 환경에서 번거로운 코드 타이핑 없이 스마트폰 Google Tasks 앱이나 Google Gemini(할 일 확장 프로그램)를 통해 안전하게 수정사항을 코드에 반영할 수 있습니다.
+      </p>
+
+      <h3>1) 작업 명세 포맷</h3>
+      <p style="font-size: 0.9rem; margin-bottom: 0.5rem;">데몬이 태스크를 정상 수집하고 파싱하기 위해 반드시 아래 양식을 준수해야 합니다.</p>
+      <ul>
+        <li><strong>제목:</strong> <code>[gem-bridge] 대상_파일_경로</code> (예: <code>[gem-bridge] src/utils.py</code>)</li>
+        <li><strong>본문 (메모):</strong> 수정 및 반영할 코드 조각 또는 상세 동작 지시사항</li>
+      </ul>
+
+      <h3 style="margin-top: 1rem;">2) 스마트폰 구글 할 일(Google Tasks) 앱에서 작성</h3>
       <ol>
-        <li>
-          <strong>태스크 발행:</strong> 모바일 스마트폰이나 웹 브라우저의 Google Drive <code>GeminiBridge/</code> 폴더에 작업 내용이 담긴 텍스트 파일(예: <code>task_20260408_01.txt</code>)을 업로드하거나 작성합니다.
-        </li>
-        <li>
-          <strong>데몬 감지:</strong> 상주 중인 <code>gem-bridge</code> 데몬이 파일 유입을 실시간 감지하여 포인터 여부를 판별하고 내용을 파싱합니다.
-        </li>
-        <li>
-          <strong>코드 수정 및 검증:</strong> 명세서에 지시된 워크스페이스 내 대상 파일에 변경 사항을 정확히 적용합니다.
-        </li>
-        <li>
-          <strong>Git Commit & Push:</strong> 수정 사항을 스테이징(<code>git add</code>)하고 자동 커밋 메시지를 생성하여 원격 저장소의 메인 브랜치로 자동 Push합니다.
-        </li>
-        <li>
-          <strong>완료 아카이빙:</strong> 처리가 완료된 태스크 파일은 중복 실행 방지를 위해 <code>GeminiBridge/processed/</code> 디렉터리로 즉시 이동 격리됩니다.
-        </li>
+        <li>구글 할 일 앱을 열고 신규 태스크를 생성합니다.</li>
+        <li>제목에 <code>[gem-bridge] src/index.js</code>와 같이 타깃 파일 상대 경로를 명시합니다.</li>
+        <li>하단 메모(Details)란에 적용할 소스코드를 완전히 채워넣은 후 저장합니다.</li>
+        <li>잠시 후 데몬이 해당 태스크를 가공하여 Git Push 후 태스크를 자동으로 <strong>완료됨</strong> 처리합니다.</li>
       </ol>
+
+      <h3 style="margin-top: 1rem;">3) 모바일 Google Gemini 앱 음성/텍스트 연동</h3>
+      <div class="alert">
+        <strong>Gemini 앱 연동 꿀팁:</strong> Gemini 앱 설정에서 "Google Workspace 확장 프로그램(Tasks)"을 활성화하세요.
+      </div>
+      <pre>사용자: "내 구글 할 일 목록에 제목은 '[gem-bridge] docs/guide.md'로 하고, 메모에는 '### 업데이트 사항\n- Tasks 연동 최적화 완료'라고 추가해줘."
+Gemini: "네, 요청하신 내용을 Google Tasks에 등록했습니다."</pre>
     </section>
 
     <section id="maintenance">
-      <h2>유지보수 및 제거 (Maintenance & Uninstallation)</h2>
+      <h2>유지보수 및 데몬 제어 (Maintenance & Operations)</h2>
 
-      <h3>1) 최신 버전 업데이트</h3>
+      <h3>1) 데몬 중단 및 상태 제어</h3>
+      <pre># 데몬 서비스 일시 중지
+sudo systemctl stop gem-bridge.service
+
+# 데몬 재시작 (소스 수정이나 설정 변경 반영 시)
+sudo systemctl restart gem-bridge.service</pre>
+
+      <h3 style="margin-top: 1rem;">2) 최신 변경사항 업데이트</h3>
       <pre>cd ~/workspace/gem-bridge
 git pull origin main
 pip install -r requirements.txt
 sudo systemctl restart gem-bridge.service</pre>
 
-      <h3 style="margin-top: 1rem;">2) 서비스 완전 제거 (Uninstall)</h3>
-      <pre># 1. systemd 서비스 중지 및 자동 시작 해제
+      <h3 style="margin-top: 1rem;">3) 완전히 삭제하기 (Uninstall)</h3>
+      <pre># systemd 서비스 정지 및 영구 등록 해제
 sudo systemctl stop gem-bridge.service
 sudo systemctl disable gem-bridge.service
 
-# 2. 서비스 정의 파일 삭제 및 systemd 리로드
+# 정의 파일 및 토큰 인증 정보 삭제
 sudo rm /etc/systemd/system/gem-bridge.service
 sudo systemctl daemon-reload
-sudo systemctl reset-failed
+rm -f ~/workspace/gem-bridge/token.json
 
-# 3. 로컬 프로젝트 디렉터리 정리 (필요시)
+# 가상환경 및 소스 디렉터리 정리
 rm -rf ~/workspace/gem-bridge</pre>
     </section>
   </main>
