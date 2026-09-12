@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.2] - 2026-09-12
+
+### Verified & Hardened
+- **Reboot Auto-Startup & Unattended Cold-Boot**:
+  - Validated headless 2-stage launch via Windows Startup (`start_wsl_bridge.vbs`) and WSL systemd service (`gem-bridge.service` enabled).
+- **PC Offline Perception & Auto-Queueing**:
+  - Graceful shutdown hook (`SIGTERM` trap) verified to immediately publish `[🔴 OFFLINE]` badge to `GeminiBridge/CONSOLE`.
+  - Offline command auto-queueing verified: instructions drafted on mobile while PC is off execute automatically upon system boot.
+  - Zero-drift KST/UTC time tag comparison verified for ungraceful outage detection.
+
+---
+
 ## [2.1.1] - 2026-09-12
 
 ### Added
