@@ -41,7 +41,8 @@ class ExecExecutor:
         self,
         repo_path: Path,
         intent: IntentAnalysisResult,
-        original_title: str = ""
+        original_title: str = "",
+        parent_id: Optional[str] = None
     ) -> Dict[str, str]:
         """Executes a command safely within repo_path."""
         command = intent.exec_command or intent.summary
@@ -102,11 +103,14 @@ class ExecExecutor:
                     mimetype="text/plain",
                     resumable=True
                 )
+                body = {
+                    "name": result_doc_name,
+                    "mimeType": "application/vnd.google-apps.document"
+                }
+                if parent_id:
+                    body["parents"] = [parent_id]
                 created = self.drive_service.files().create(
-                    body={
-                        "name": result_doc_name,
-                        "mimeType": "application/vnd.google-apps.document"
-                    },
+                    body=body,
                     media_body=media,
                     fields="id, name"
                 ).execute()

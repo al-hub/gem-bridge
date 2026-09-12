@@ -33,7 +33,8 @@ class ReadExecutor:
         self,
         repo_path: Path,
         intent: IntentAnalysisResult,
-        original_title: str = ""
+        original_title: str = "",
+        parent_id: Optional[str] = None
     ) -> Dict[str, str]:
         """
         Executes a READ task without any repository modifications or git push.
@@ -51,7 +52,7 @@ class ReadExecutor:
         clean_title = self._clean_doc_title(original_title or intent.summary)
         doc_name = f"[보고서] {clean_title}"
 
-        created_doc = self._upload_to_drive(doc_name, report_content)
+        created_doc = self._upload_to_drive(doc_name, report_content, parent_id=parent_id)
         doc_id = created_doc.get("id", "")
         logger.info(f"[READ Executor] Successfully created report doc: {doc_name} (ID: {doc_id})")
 
@@ -87,66 +88,55 @@ class ReadExecutor:
                 if p.exists() and p.is_file() and p.is_relative_to(repo_path):
                     candidate_files.append(p)
                 elif p.exists() and p.is_dir() and p.is_relative_to(repo_path):
-                    for sub in p.glob("**/*"):
+                    for sub in p.rglob("*"):
                         if sub.is_file() and not self._is_ignored(sub):
                             candidate_files.append(sub)
 
-        # If no specific files or to supplement, include standard root docs & main source files
-        default_lookups = [
-            "README.md", "ARCHITECTURE.md", "docs/ARCHITECTURE.md",
-            "package.json", "setup.py", "pyproject.toml", "config.json"
-        ]
-        for lookup in default_lookups:
-            p = repo_path / lookup
-            if p.exists() and p.is_file() and p not in candidate_files:
-                candidate_files.append(p)
+        # Default fallback key files if no specific target files requested
+        if not candidate_files:
+            priority_names = [
+                "README.md", "ARCHITECTURE.md", "pyproject.toml", "package.json",
+                "requirements.txt", "main.py", "index.ts", "index.js", "setup.py"
+            ]
+            for name in priority_names:
+                p = (repo_path / name).resolve()
+                if p.exists() and p.is_file():
+                    candidate_files.append(p)
 
-        # Add top source files if still small
-        for item in sorted(repo_path.iterdir()):
-            if item.is_file() and item.suffix in [".py", ".ts", ".js", ".go", ".rs", ".md", ".json"]:
-                if item not in candidate_files and not self._is_ignored(item):
-                    candidate_files.append(item)
-
-        # Read contents
+        # Collect file contents with limits
         for file_path in candidate_files:
             if collected_chars >= max_total_chars:
-                context_parts.append("\n[참고: 컨텍스트 크기 제한으로 일부 파일 생략됨]")
                 break
-
             try:
                 rel_path = file_path.relative_to(repo_path)
-                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read(5000)  # max 5000 chars per file
-                
-                snippet = f"### 파일: `{rel_path}`\n```\n{content}\n```\n"
-                context_parts.append(snippet)
-                collected_chars += len(snippet)
+                content = file_path.read_text(encoding="utf-8", errors="replace")
+                truncated = content[:8000]
+                part = f"#### 파일: `{rel_path}`\n```\n{truncated}\n```\n\n"
+                context_parts.append(part)
+                collected_chars += len(part)
             except Exception as e:
-                logger.debug(f"Could not read {file_path}: {e}")
+                logger.warning(f"Could not read {file_path} for context: {e}")
 
         return "\n".join(context_parts)
 
     def _build_directory_tree(self, root_dir: Path, max_depth: int = 3) -> str:
-        """Returns a string representation of directory tree up to max_depth."""
-        lines = [root_dir.name + "/"]
+        lines: List[str] = []
 
-        def _traverse(current_dir: Path, prefix: str, depth: int):
+        def _traverse(curr_dir: Path, prefix: str, depth: int):
             if depth > max_depth:
                 return
             try:
-                entries = sorted(
-                    [e for e in current_dir.iterdir() if not self._is_ignored(e)],
-                    key=lambda x: (x.is_file(), x.name.lower())
-                )
-            except Exception:
+                entries = sorted(curr_dir.iterdir(), key=lambda x: (not x.is_dir(), x.name))
+            except PermissionError:
                 return
 
-            for i, entry in enumerate(entries):
-                is_last = (i == len(entries) - 1)
+            visible_entries = [e for e in entries if not self._is_ignored(e)]
+            for i, entry in enumerate(visible_entries):
+                is_last = (i == len(visible_entries) - 1)
                 connector = "└── " if is_last else "├── "
                 sub_prefix = "    " if is_last else "│   "
-                display_name = entry.name + ("/" if entry.is_dir() else "")
-                lines.append(f"{prefix}{connector}{display_name}")
+
+                lines.append(f"{prefix}{connector}{entry.name}{'/' if entry.is_dir() else ''}")
 
                 if entry.is_dir():
                     _traverse(entry, prefix + sub_prefix, depth + 1)
@@ -214,7 +204,7 @@ Gemini 모델({self.model_name}) 호출 중 오류가 발생하여 자동 생성
 {repo_context[:3000]}
 """
 
-    def _upload_to_drive(self, title: str, content: str) -> dict:
+    def _upload_to_drive(self, title: str, content: str, parent_id: Optional[str] = None) -> dict:
         """Uploads plain text as a native Google Doc via Drive API."""
         if not self.drive_service:
             logger.warning("Drive service is None; skipping drive upload.")
@@ -229,6 +219,9 @@ Gemini 모델({self.model_name}) 호출 중 오류가 발생하여 자동 생성
             "name": title,
             "mimeType": "application/vnd.google-apps.document"
         }
+        if parent_id:
+            file_metadata["parents"] = [parent_id]
+
         return self.drive_service.files().create(
             body=file_metadata,
             media_body=media,

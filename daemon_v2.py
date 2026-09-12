@@ -102,11 +102,11 @@ class GemBridgeDaemonV2:
         if not self.drive_service:
             return []
 
-        query = "mimeType = 'application/vnd.google-apps.document' and trashed = false"
+        query = "(mimeType = 'application/vnd.google-apps.document' or mimeType = 'text/plain' or mimeType = 'application/json') and trashed = false"
         try:
             results = self.drive_service.files().list(
                 q=query,
-                fields="files(id, name, createdTime, modifiedTime)",
+                fields="files(id, name, mimeType, parents, createdTime, modifiedTime)",
                 pageSize=20,
                 orderBy="modifiedTime desc"
             ).execute()
@@ -135,17 +135,28 @@ class GemBridgeDaemonV2:
 
         return candidates
 
-    def process_single_task(self, doc_id: str, doc_name: str):
+    def process_single_task(
+        self,
+        doc_id: str,
+        doc_name: str,
+        doc_mime: str = "application/vnd.google-apps.document",
+        parent_id: Optional[str] = None
+    ):
         """Processes a single task document through the dispatcher pipeline."""
         logger.info(f"=== [Dispatcher] Task detected: '{doc_name}' (ID: {doc_id}) ===")
         self.processed_ids.add(doc_id)
 
         try:
-            # 1. Export document text
-            raw_text = self.drive_service.files().export_media(
-                fileId=doc_id,
-                mimeType="text/plain"
-            ).execute().decode("utf-8")
+            # 1. Export or download document text
+            if doc_mime == "application/vnd.google-apps.document":
+                raw_text = self.drive_service.files().export_media(
+                    fileId=doc_id,
+                    mimeType="text/plain"
+                ).execute().decode("utf-8")
+            else:
+                raw_text = self.drive_service.files().get_media(
+                    fileId=doc_id
+                ).execute().decode("utf-8")
 
             # 2. Analyze Intent (Enforcing Default=READ)
             available_repos = list(self.repo_manager.repo_mapping.keys())
@@ -164,7 +175,7 @@ class GemBridgeDaemonV2:
 
             # 4. Dispatch to Executor based on TaskType
             if intent.task_type == TaskType.READ:
-                result = self.read_executor.execute(repo_path, intent, original_title=doc_name)
+                result = self.read_executor.execute(repo_path, intent, original_title=doc_name, parent_id=parent_id)
                 logger.info(f"[READ] Generated report doc: {result.get('doc_name')} ({result.get('doc_id')})")
 
             elif intent.task_type == TaskType.WRITE:
@@ -173,10 +184,10 @@ class GemBridgeDaemonV2:
                     f"[WRITE] Committed {result.get('commit_hash', '')[:7]}: {result.get('commit_message')} on {result.get('target_path')}"
                 )
                 # Upload brief completion confirmation to Google Drive
-                self._create_completion_doc(doc_name, result)
+                self._create_completion_doc(doc_name, result, parent_id=parent_id)
 
             elif intent.task_type == TaskType.EXEC:
-                result = self.exec_executor.execute(repo_path, intent, original_title=doc_name)
+                result = self.exec_executor.execute(repo_path, intent, original_title=doc_name, parent_id=parent_id)
                 logger.info(f"[EXEC] Command completed with exit code {result.get('exit_code')}")
 
             else:
@@ -189,14 +200,14 @@ class GemBridgeDaemonV2:
         except Exception as task_error:
             logger.error(f"[Dispatcher Error] Task '{doc_name}' failed: {task_error}")
             logger.error(traceback.format_exc())
-            self._handle_task_error(doc_id, doc_name, task_error)
+            self._handle_task_error(doc_id, doc_name, task_error, parent_id=parent_id)
             try:
                 self.drive_service.files().update(fileId=doc_id, body={"trashed": True}).execute()
                 logger.info(f"[Dispatcher] Errored task document moved to trash: '{doc_name}'")
             except Exception as trash_err:
                 logger.warning(f"Could not trash errored task '{doc_name}': {trash_err}")
 
-    def _create_completion_doc(self, original_title: str, write_result: dict):
+    def _create_completion_doc(self, original_title: str, write_result: dict, parent_id: Optional[str] = None):
         """Creates a completion confirmation document on Google Drive for WRITE tasks."""
         if not self.drive_service:
             return
@@ -218,15 +229,18 @@ class GemBridgeDaemonV2:
 """
         try:
             media = MediaInMemoryUpload(content.encode("utf-8"), mimetype="text/plain", resumable=True)
+            body = {"name": doc_title, "mimeType": "application/vnd.google-apps.document"}
+            if parent_id:
+                body["parents"] = [parent_id]
             self.drive_service.files().create(
-                body={"name": doc_title, "mimeType": "application/vnd.google-apps.document"},
+                body=body,
                 media_body=media,
                 fields="id, name"
             ).execute()
         except Exception as e:
             logger.warning(f"Could not upload completion doc: {e}")
 
-    def _handle_task_error(self, doc_id: str, doc_name: str, error: Exception):
+    def _handle_task_error(self, doc_id: str, doc_name: str, error: Exception, parent_id: Optional[str] = None):
         """Safely logs error and creates an error document on Google Drive without crashing."""
         if not self.drive_service:
             return
@@ -252,8 +266,11 @@ class GemBridgeDaemonV2:
 """
         try:
             media = MediaInMemoryUpload(error_md.encode("utf-8"), mimetype="text/plain", resumable=True)
+            body = {"name": error_title, "mimeType": "application/vnd.google-apps.document"}
+            if parent_id:
+                body["parents"] = [parent_id]
             self.drive_service.files().create(
-                body={"name": error_title, "mimeType": "application/vnd.google-apps.document"},
+                body=body,
                 media_body=media,
                 fields="id, name"
             ).execute()
@@ -267,7 +284,14 @@ class GemBridgeDaemonV2:
         if candidates:
             logger.info(f"Found {len(candidates)} candidate document(s).")
             for doc in candidates:
-                self.process_single_task(doc["id"], doc.get("name", "Untitled"))
+                parents = doc.get("parents") or []
+                parent_id = parents[0] if parents else None
+                self.process_single_task(
+                    doc_id=doc["id"],
+                    doc_name=doc.get("name", "Untitled"),
+                    doc_mime=doc.get("mimeType", "application/vnd.google-apps.document"),
+                    parent_id=parent_id
+                )
 
     def start(self):
         """Runs the main polling dispatcher loop."""
