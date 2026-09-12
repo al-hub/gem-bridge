@@ -42,38 +42,36 @@ def execute_git_task(repo_path: Path, target_path: str, content: str, commit_mes
     log_message(f"Push successful to {repo_path.name}")
 
 def parse_json_payload(raw_data) -> dict:
-    # 1. 이미 dict 형태로 넘어온 경우 (.gdoc 메타데이터 등)
+    # 1. dict 형태 (.gdoc 메타데이터)
     if isinstance(raw_data, dict):
         if "doc_id" in raw_data:
             doc_id = raw_data.get("doc_id")
             export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
             res = subprocess.run(["curl.exe", "-sL", export_url], capture_output=True, text=True, errors="ignore")
-            if res.stdout.strip():
+            # 로그인 페이지(HTML)가 아닌 실제 텍스트인지 검증
+            if res.stdout.strip() and not res.stdout.strip().startswith("<!DOCTYPE"):
                 raw_data = res.stdout.strip()
             else:
-                return raw_data
+                raise ValueError(f"Google Docs export requires public sharing: doc_id={doc_id}")
         else:
             return raw_data
 
-    # 2. 문자열 형태로 넘어온 경우
+    # 2. 문자열 형태
     text = str(raw_data).strip()
     if "```json" in text:
         text = text.split("```json")[1].split("```")[0].strip()
     elif "```" in text:
         text = text.split("```")[1].split("```")[0].strip()
 
-    # Google Docs 메타데이터 문자열인 경우 doc_id 추출 및 텍스트 취득
     if '"doc_id"' in text and '"url"' in text:
-        try:
-            meta = json.loads(text)
-            doc_id = meta.get("doc_id")
-            if doc_id:
-                export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
-                res = subprocess.run(["curl.exe", "-sL", export_url], capture_output=True, text=True, errors="ignore")
-                if res.stdout.strip():
-                    text = res.stdout.strip()
-        except Exception:
-            pass
+        meta = json.loads(text)
+        doc_id = meta.get("doc_id")
+        export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+        res = subprocess.run(["curl.exe", "-sL", export_url], capture_output=True, text=True, errors="ignore")
+        if res.stdout.strip() and not res.stdout.strip().startswith("<!DOCTYPE"):
+            text = res.stdout.strip()
+        else:
+            raise ValueError(f"Google Docs export requires public sharing: doc_id={doc_id}")
 
     start_idx = text.find("{")
     end_idx = text.rfind("}")
@@ -83,8 +81,9 @@ def parse_json_payload(raw_data) -> dict:
     return json.loads(text)
 
 def check_and_process_windows_drive():
+    # .json 파일을 우선 감시
     ps_script = """
-    $targets = @("G:\\내 드라이브\\GeminiBridge\\*.json", "G:\\내 드라이브\\GeminiBridge\\*.gdoc", "G:\\내 드라이브\\task*.gdoc", "G:\\내 드라이브\\task*.json")
+    $targets = @("G:\\내 드라이브\\GeminiBridge\\*.json", "G:\\내 드라이브\\task*.json", "G:\\내 드라이브\\GeminiBridge\\*.gdoc", "G:\\내 드라이브\\task*.gdoc")
     $files = Get-ChildItem -Path $targets -ErrorAction SilentlyContinue
     foreach ($f in $files) {
         $content = Get-Content -LiteralPath $f.FullName -Raw -ErrorAction SilentlyContinue
@@ -110,8 +109,8 @@ def check_and_process_windows_drive():
             if not file_name or file_name in PROCESSED_ITEMS:
                 continue
 
-            log_message(f"Discovered task candidate via Windows Bridge: {file_name}")
             PROCESSED_ITEMS.add(file_name)
+            log_message(f"Processing candidate: {file_name}")
 
             data = parse_json_payload(content)
             repo_key = data.get("repo")
@@ -126,13 +125,13 @@ def check_and_process_windows_drive():
 
             del_cmd = ["powershell.exe", "-NoProfile", "-Command", f"Remove-Item -LiteralPath '{full_path}' -Force"]
             subprocess.run(del_cmd, capture_output=True)
-            log_message(f"Task finished and removed from Drive: {file_name}")
+            log_message(f"Task finished and removed: {file_name}")
 
         except Exception as e:
             log_message(f"[ERROR] Failed processing {file_name}: {e}")
 
 def main():
-    log_message("=== Gemini Bridge Daemon (v5: Dict-Safe Type Parsing) Started ===")
+    log_message("=== Gemini Bridge Daemon (v6) Started ===")
     while True:
         try:
             check_and_process_windows_drive()
