@@ -190,6 +190,11 @@ class GemBridgeDaemonV2:
             logger.error(f"[Dispatcher Error] Task '{doc_name}' failed: {task_error}")
             logger.error(traceback.format_exc())
             self._handle_task_error(doc_id, doc_name, task_error)
+            try:
+                self.drive_service.files().update(fileId=doc_id, body={"trashed": True}).execute()
+                logger.info(f"[Dispatcher] Errored task document moved to trash: '{doc_name}'")
+            except Exception as trash_err:
+                logger.warning(f"Could not trash errored task '{doc_name}': {trash_err}")
 
     def _create_completion_doc(self, original_title: str, write_result: dict):
         """Creates a completion confirmation document on Google Drive for WRITE tasks."""

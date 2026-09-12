@@ -66,6 +66,28 @@ class TestIntentAnalyzer(unittest.TestCase):
             self.assertEqual(result.target_repo, "gem-bridge")
             self.assertIn("API Timeout", result.reasoning)
 
+    def test_fallback_read_preserves_mentioned_repo(self):
+        with patch.object(self.analyzer.client.models, "generate_content", side_effect=Exception("API Timeout")):
+            result = self.analyzer.analyze("repo: tetris-loop 에서 버그 조사", title="오류", available_repos=["kum", "tetris-loop", "gem-bridge"])
+            self.assertEqual(result.task_type, TaskType.READ)
+            self.assertEqual(result.target_repo, "tetris-loop")
+
+    def test_key_value_content_start_parsing(self):
+        raw_text = """\ufeffrepo: gem-bridge
+target_path: index.html
+commit_message: feat: update landing page
+---CONTENT_START---
+<!DOCTYPE html>
+<html><body>Hello</body></html>
+---CONTENT_END---
+"""
+        result = self.analyzer.analyze(raw_text, title="task.txt", available_repos=["kum", "gem-bridge"])
+        self.assertEqual(result.task_type, TaskType.WRITE)
+        self.assertEqual(result.target_repo, "gem-bridge")
+        self.assertEqual(result.target_path, "index.html")
+        self.assertEqual(result.commit_message, "feat: update landing page")
+        self.assertIn("<!DOCTYPE html>", result.content)
+
 
 if __name__ == "__main__":
     unittest.main()

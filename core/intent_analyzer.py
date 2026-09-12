@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field
@@ -80,19 +81,25 @@ class IntentAnalyzer:
         available_repos: Optional[List[str]] = None
     ) -> IntentAnalysisResult:
         available_repos = available_repos or [self.default_repo]
-        combined_text = f"제목: {title}\n본문:\n{raw_text}".strip()
+        raw_text_clean = raw_text.lstrip("\ufeff")
+        combined_text = f"제목: {title}\n본문:\n{raw_text_clean}".strip()
 
         # 1. Check for direct JSON payload (e.g. legacy structured requests)
-        json_payload = self._extract_raw_json(raw_text)
+        json_payload = self._extract_raw_json(raw_text_clean)
         if json_payload and isinstance(json_payload, dict):
             direct_result = self._parse_from_json_dict(json_payload, available_repos)
             if direct_result:
                 return direct_result
 
-        # 2. Check for explicit command prefixes (!분석, !작업, !실행)
-        command_hint = self._detect_command_prefix(title, raw_text)
+        # 2. Check for key-value / CONTENT_START format (e.g. mobile text commands)
+        kv_result = self._extract_raw_key_value(raw_text_clean, available_repos)
+        if kv_result:
+            return kv_result
 
-        # 3. LLM structured analysis with gemini-3.6-flash
+        # 3. Check for explicit command prefixes (!분석, !작업, !실행)
+        command_hint = self._detect_command_prefix(title, raw_text_clean)
+
+        # 4. LLM structured analysis with gemini-3.6-flash
         if not self.client:
             logger.warning("Gemini Client not initialized (missing API key). Falling back to default READ intent.")
             return self._build_fallback_read_intent(combined_text, available_repos, "Missing API Key")
@@ -104,6 +111,93 @@ class IntentAnalyzer:
             return self._build_fallback_read_intent(
                 combined_text, available_repos, f"LLM parsing error fallback: {e}"
             )
+
+    def _extract_raw_key_value(
+        self, text: str, available_repos: List[str]
+    ) -> Optional[IntentAnalysisResult]:
+        cleaned = text.strip().lstrip("\ufeff").strip()
+
+        # 1. Check for ---CONTENT_START--- block
+        if "---CONTENT_START---" in cleaned:
+            parts = cleaned.split("---CONTENT_START---", 1)
+            header_part = parts[0]
+            content_part = parts[1]
+            if "---CONTENT_END---" in content_part:
+                content_part = content_part.split("---CONTENT_END---", 1)[0]
+            content = content_part.strip()
+
+            headers = {}
+            for line in header_part.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    headers[k.strip().lower()] = v.strip()
+
+            target_path = headers.get("target_path") or headers.get("path") or headers.get("file")
+            repo = headers.get("repo") or self.default_repo
+            if repo not in available_repos and not (repo.startswith("http") or repo.startswith("git@")):
+                repo = self.default_repo
+            commit_msg = (
+                headers.get("commit_message")
+                or headers.get("commit")
+                or headers.get("message")
+                or f"update: {target_path} via gem-bridge v2"
+            )
+
+            if target_path and content:
+                return IntentAnalysisResult(
+                    task_type=TaskType.WRITE,
+                    target_repo=repo,
+                    summary=f"Write file: {target_path}",
+                    target_path=target_path,
+                    content=content,
+                    commit_message=commit_msg,
+                    reasoning="Direct key-value payload with CONTENT_START block."
+                )
+
+        # 2. Check for simple key-value YAML-like format with content:
+        lines = cleaned.splitlines()
+        kv = {}
+        content_lines = []
+        is_capturing_content = False
+        for line in lines:
+            if is_capturing_content:
+                content_lines.append(line)
+            elif ":" in line and not line.strip().startswith("#"):
+                k, v = line.split(":", 1)
+                k_norm = k.strip().lower()
+                if k_norm in ("repo", "target_path", "path", "file", "commit_message", "commit", "message"):
+                    kv[k_norm] = v.strip()
+                elif k_norm == "content":
+                    is_capturing_content = True
+                    if v.strip():
+                        content_lines.append(v.strip())
+
+        target_path = kv.get("target_path") or kv.get("path") or kv.get("file")
+        if target_path and content_lines:
+            repo = kv.get("repo") or self.default_repo
+            if repo not in available_repos and not (repo.startswith("http") or repo.startswith("git@")):
+                repo = self.default_repo
+            commit_msg = (
+                kv.get("commit_message")
+                or kv.get("commit")
+                or kv.get("message")
+                or f"update: {target_path} via gem-bridge v2"
+            )
+            content = "\n".join(content_lines).strip()
+            return IntentAnalysisResult(
+                task_type=TaskType.WRITE,
+                target_repo=repo,
+                summary=f"Write file: {target_path}",
+                target_path=target_path,
+                content=content,
+                commit_message=commit_msg,
+                reasoning="Direct key-value payload."
+            )
+
+        return None
 
     def _detect_command_prefix(self, title: str, text: str) -> Optional[TaskType]:
         check_str = f"{title}\n{text}".strip().lower()
@@ -209,11 +303,23 @@ class IntentAnalyzer:
             temperature=0.1,
         )
 
-        response = self.client.models.generate_content(
-            model=self.MODEL_NAME,
-            contents=prompt,
-            config=config,
-        )
+        max_retries = 2
+        response = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.MODEL_NAME,
+                    contents=prompt,
+                    config=config,
+                )
+                break
+            except Exception as e:
+                err_msg = str(e)
+                if ("503" in err_msg or "429" in err_msg or "UNAVAILABLE" in err_msg) and attempt < max_retries:
+                    logger.warning(f"Gemini API temporary error ({e}), retrying in {2 ** attempt}s...")
+                    time.sleep(2 ** attempt)
+                else:
+                    raise
 
         raw_json_str = response.text.strip()
         result = IntentAnalysisResult.model_validate_json(raw_json_str)
@@ -242,10 +348,18 @@ class IntentAnalyzer:
     def _build_fallback_read_intent(
         self, full_text: str, available_repos: List[str], reason: str
     ) -> IntentAnalysisResult:
-        repo = available_repos[0] if available_repos else self.default_repo
+        selected_repo = None
+        for r in available_repos:
+            if re.search(rf"\b{re.escape(r)}\b", full_text, re.IGNORECASE):
+                selected_repo = r
+                break
+
+        if not selected_repo:
+            selected_repo = self.default_repo if self.default_repo in available_repos else (available_repos[0] if available_repos else self.default_repo)
+
         return IntentAnalysisResult(
             task_type=TaskType.READ,
-            target_repo=repo,
+            target_repo=selected_repo,
             summary="Fallback to READ due to processing error",
             query=full_text,
             reasoning=reason
