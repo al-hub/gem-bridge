@@ -3,4 +3,7 @@ token.json
 result.log
 __pycache__/
 *.pyc
+.agents/
+.claude/
+skills-lock.json
 
