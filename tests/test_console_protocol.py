@@ -94,6 +94,20 @@ class TestConsoleProtocol(unittest.TestCase):
         self.assertIn("🔴 OFFLINE", rendered)
         self.assertIn("현재 PC가 꺼져 있습니다", rendered)
 
+    def test_formatter_with_trace_id_and_latency(self):
+        rendered = ConsoleDocFormatter.render(
+            status="ONLINE",
+            input_command="!작업 kum 수정",
+            output_content="성공적으로 커밋되었습니다.",
+            trace_id="tsk_20260912162000_abcd",
+            duration_summary="2.15s [drive: 200ms | git: 1950ms]",
+            sync_lag_ms=1200.5
+        )
+        self.assertIn("tsk_20260912162000_abcd", rendered)
+        self.assertIn("2.15s [drive: 200ms | git: 1950ms]", rendered)
+        self.assertIn("1200ms", rendered)
+        self.assertIn("동기화 지연", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

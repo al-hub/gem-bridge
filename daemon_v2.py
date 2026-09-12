@@ -24,6 +24,7 @@ from core.console_protocol import (
     DEFAULT_PLACEHOLDER,
     OUTPUT_SECTION_HEADER,
 )
+from core.telemetry import TimeTagFormatter, PipelineProfiler
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -366,115 +367,135 @@ class GemBridgeDaemonV2:
                 self._last_console_modified_time = modified_time
                 return
 
-            logger.info(f"=== [CONSOLE] New command detected: '{cmd}' ===")
-            now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+            trace_id = TimeTagFormatter.generate_trace_id()
+            sync_lag_ms = TimeTagFormatter.calculate_sync_lag_ms(modified_time)
+            profiler = PipelineProfiler(trace_id=trace_id)
+
+            logger.info(f"=== [{trace_id}][CONSOLE] Command detected: '{cmd}' | sync_lag={int(sync_lag_ms)}ms ===")
+            now_str = TimeTagFormatter.format_kst()
 
             # Extract existing history before processing
             history = ConsoleProtocolParser.extract_history(raw_content)
 
             # 6. Set PROCESSING status badge
-            proc_text = ConsoleDocFormatter.render(
-                status="PROCESSING",
-                input_command=cmd,
-                output_content="*(현재 작업을 수행하고 있습니다. 잠시만 기다려 주세요...)*",
-                history_items=history
-            )
-            self._write_console_content(proc_text)
+            with profiler.step("set_processing"):
+                proc_text = ConsoleDocFormatter.render(
+                    status="PROCESSING",
+                    input_command=cmd,
+                    output_content="*(현재 작업을 수행하고 있습니다. 잠시만 기다려 주세요...)*",
+                    history_items=history,
+                    trace_id=trace_id,
+                    sync_lag_ms=sync_lag_ms
+                )
+                self._write_console_content(proc_text)
 
             # 7. Analyze Intent
-            available_repos = list(self.repo_manager.repo_mapping.keys())
-            intent = self.intent_analyzer.analyze(
-                raw_text=cmd,
-                title=cmd,
-                available_repos=available_repos
-            )
+            with profiler.step("intent_llm"):
+                available_repos = list(self.repo_manager.repo_mapping.keys())
+                intent = self.intent_analyzer.analyze(
+                    raw_text=cmd,
+                    title=cmd,
+                    available_repos=available_repos
+                )
             logger.info(
-                f"[CONSOLE Intent] Type: {intent.task_type.value} | TargetRepo: {intent.target_repo} | Summary: {intent.summary}"
+                f"[{trace_id}][CONSOLE Intent] Type: {intent.task_type.value} | TargetRepo: {intent.target_repo} | Summary: {intent.summary}"
             )
 
             self._update_status(
                 f"# 🔄 [작업 진행 중 (CONSOLE)] {intent.summary}\n\n"
-                f"- 시각: {now_str} KST\n- 대상: {intent.target_repo}\n- 유형: {intent.task_type.value}"
+                f"- Trace ID: `{trace_id}`\n- 시각: {now_str}\n- 대상: {intent.target_repo}\n- 유형: {intent.task_type.value}"
             )
 
             # 8. Dispatch based on task type
-            repo_path = self.repo_manager.prepare_repo(intent.target_repo)
+            with profiler.step("repo_prepare"):
+                repo_path = self.repo_manager.prepare_repo(intent.target_repo)
+
             output_str = ""
             history_entry = ""
 
-            if intent.task_type == TaskType.READ:
-                result = self.read_executor.execute(repo_path, intent, original_title="CONSOLE_READ", parent_id=self.folder_id)
-                output_str = (
-                    f"### 📄 [분석 보고서 요약]\n"
-                    f"- 대상 저장소: `{intent.target_repo}`\n"
-                    f"- 분석 주제: **{intent.summary}**\n\n"
-                    f"{result.get('preview', '')}\n\n"
-                    f"*(전체 보고서는 Google Drive의 `{result.get('doc_name')}` 문서에 저장되었습니다.)*"
-                )
-                history_entry = f"- [{now_str[:16]} KST] [📄 분석] {intent.summary} (`{intent.target_repo}`)"
+            with profiler.step("executor"):
+                if intent.task_type == TaskType.READ:
+                    result = self.read_executor.execute(repo_path, intent, original_title="CONSOLE_READ", parent_id=self.folder_id)
+                    output_str = (
+                        f"### 📄 [분석 보고서 요약]\n"
+                        f"- 대상 저장소: `{intent.target_repo}`\n"
+                        f"- 분석 주제: **{intent.summary}**\n\n"
+                        f"{result.get('preview', '')}\n\n"
+                        f"*(전체 보고서는 Google Drive의 `{result.get('doc_name')}` 문서에 저장되었습니다.)*"
+                    )
+                    history_entry = f"- [{now_str[5:16]}] [📄 분석] {intent.summary} (#{trace_id[-4:]})"
 
-            elif intent.task_type == TaskType.WRITE:
-                result = self.write_executor.execute(repo_path, intent)
-                diff_preview = result.get('diff') or '(신규 파일)'
-                if len(diff_preview) > 1200:
-                    diff_preview = diff_preview[:1200] + "\n...(생략)..."
-                output_str = (
-                    f"### ✅ [코드 변경 및 Git 커밋 완료]\n"
-                    f"- 대상 저장소: `{intent.target_repo}`\n"
-                    f"- 변경 파일: `{result.get('target_path')}`\n"
-                    f"- 커밋 메시지: `{result.get('commit_message')}`\n"
-                    f"- 커밋 해시: `{result.get('commit_hash')}` (GitHub origin/main 푸시 완료)\n\n"
-                    f"```diff\n{diff_preview}\n```"
-                )
-                history_entry = f"- [{now_str[:16]} KST] [✅ 수정] `{result.get('target_path')}`: {result.get('commit_message')} ({result.get('commit_hash', '')[:7]})"
+                elif intent.task_type == TaskType.WRITE:
+                    result = self.write_executor.execute(repo_path, intent)
+                    diff_preview = result.get('diff') or '(신규 파일)'
+                    if len(diff_preview) > 1200:
+                        diff_preview = diff_preview[:1200] + "\n...(생략)..."
+                    output_str = (
+                        f"### ✅ [코드 변경 및 Git 커밋 완료]\n"
+                        f"- 대상 저장소: `{intent.target_repo}`\n"
+                        f"- 변경 파일: `{result.get('target_path')}`\n"
+                        f"- 커밋 메시지: `{result.get('commit_message')}`\n"
+                        f"- 커밋 해시: `{result.get('commit_hash')}` (GitHub origin/main 푸시 완료)\n\n"
+                        f"```diff\n{diff_preview}\n```"
+                    )
+                    history_entry = f"- [{now_str[5:16]}] [✅ 수정] `{result.get('target_path')}`: {result.get('commit_message')} ({result.get('commit_hash', '')[:7]}, #{trace_id[-4:]})"
 
-            elif intent.task_type == TaskType.EXEC:
-                result = self.exec_executor.execute(repo_path, intent, original_title="CONSOLE_EXEC", parent_id=self.folder_id)
-                console_out = (result.get('stdout', '') + '\n' + result.get('stderr', '')).strip()
-                if len(console_out) > 1200:
-                    console_out = console_out[:1200] + "\n...(생략)..."
-                output_str = (
-                    f"### 💻 [명령 실행 완료]\n"
-                    f"- 명령어: `{intent.exec_command}`\n"
-                    f"- 종료 코드: {result.get('exit_code')}\n\n"
-                    f"```text\n{console_out or '(출력 없음)'}\n```"
-                )
-                history_entry = f"- [{now_str[:16]} KST] [💻 실행] `{intent.exec_command}` (종료 코드: {result.get('exit_code')})"
+                elif intent.task_type == TaskType.EXEC:
+                    result = self.exec_executor.execute(repo_path, intent, original_title="CONSOLE_EXEC", parent_id=self.folder_id)
+                    console_out = (result.get('stdout', '') + '\n' + result.get('stderr', '')).strip()
+                    if len(console_out) > 1200:
+                        console_out = console_out[:1200] + "\n...(생략)..."
+                    output_str = (
+                        f"### 💻 [명령 실행 완료]\n"
+                        f"- 명령어: `{intent.exec_command}`\n"
+                        f"- 종료 코드: {result.get('exit_code')}\n\n"
+                        f"```text\n{console_out or '(출력 없음)'}\n```"
+                    )
+                    history_entry = f"- [{now_str[5:16]}] [💻 실행] `{intent.exec_command}` (종료: {result.get('exit_code')}, #{trace_id[-4:]})"
 
             # 9. Update History list (keep recent 3)
             history.insert(0, history_entry)
             history = history[:3]
 
-            # 10. Render final ONLINE state with result
-            done_text = ConsoleDocFormatter.render(
-                status="ONLINE",
-                input_command=DEFAULT_PLACEHOLDER,
-                output_content=output_str,
-                history_items=history
-            )
-            self._write_console_content(done_text)
+            duration_summary = profiler.format_summary()
+            logger.info(f"[{trace_id}][CONSOLE] Pipeline Completed: {duration_summary} | sync_lag={int(sync_lag_ms)}ms")
+
+            # 10. Render final ONLINE state with result and telemetry
+            with profiler.step("drive_update"):
+                done_text = ConsoleDocFormatter.render(
+                    status="ONLINE",
+                    input_command=DEFAULT_PLACEHOLDER,
+                    output_content=output_str,
+                    history_items=history,
+                    trace_id=trace_id,
+                    duration_summary=duration_summary,
+                    sync_lag_ms=sync_lag_ms
+                )
+                self._write_console_content(done_text)
 
             self._last_processed_command_hash = cmd_hash
-            logger.info(f"=== [CONSOLE] Task completed successfully: '{cmd}' ===")
 
             self._update_status(
                 f"# ✅ [작업 완료 (CONSOLE)] {intent.summary}\n\n"
-                f"- 완료 시각: {time.strftime('%Y-%m-%d %H:%M:%S')} KST\n"
+                f"- Trace ID: `{trace_id}`\n"
+                f"- 소요 시간: `{duration_summary}`\n"
+                f"- 완료 시각: {TimeTagFormatter.format_kst()}\n"
                 f"- 대상 저장소: {intent.target_repo}"
             )
 
         except Exception as e:
             logger.error(f"[CONSOLE Error] Failed to process CONSOLE task: {e}")
             logger.error(traceback.format_exc())
-            self._handle_console_error(e)
+            self._handle_console_error(e, trace_id=locals().get("trace_id"))
 
-    def _handle_console_error(self, error: Exception):
+    def _handle_console_error(self, error: Exception, trace_id: Optional[str] = None):
         """Displays friendly error in CONSOLE output area without crashing daemon."""
         if not self.drive_service or not self.console_doc_id:
             return
         try:
+            tid_info = f" | **Trace ID**: `{trace_id}`" if trace_id else ""
             error_output = (
-                f"### ⚠️ [작업 처리 중 오류 발생]\n"
+                f"### ⚠️ [작업 처리 중 오류 발생]{tid_info}\n"
                 f"- 오류 종류: `{type(error).__name__}`\n"
                 f"- 오류 메시지: `{str(error)}`\n\n"
                 f"시스템은 정상 유지 중입니다. 입력 형식을 확인 후 다시 시도해 주세요."
@@ -482,7 +503,8 @@ class GemBridgeDaemonV2:
             error_text = ConsoleDocFormatter.render(
                 status="ERROR",
                 input_command=DEFAULT_PLACEHOLDER,
-                output_content=error_output
+                output_content=error_output,
+                trace_id=trace_id
             )
             self._write_console_content(error_text)
         except Exception as err:

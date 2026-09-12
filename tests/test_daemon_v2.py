@@ -161,6 +161,46 @@ class TestDaemonV2(unittest.TestCase):
             ConsoleProtocolParser.compute_command_hash(cmd)
         )
 
+    def test_console_telemetry_trace_and_duration(self):
+        cmd = "!작업 kum 랜딩페이지 개선"
+        doc_content = ConsoleDocFormatter.render(status="ONLINE", input_command=cmd)
+        self.daemon.drive_service.files().get().execute.return_value = {
+            "modifiedTime": "2026-09-12T07:19:20.000Z"
+        }
+        self.daemon.drive_service.files().export_media().execute.return_value = doc_content.encode("utf-8")
+        self.daemon._last_console_modified_time = "old_time"
+        self.daemon._last_console_content_hash = "old_content_hash"
+        self.daemon._last_processed_command_hash = "old_cmd_hash"
+
+        mock_intent = IntentAnalysisResult(
+            task_type=TaskType.WRITE,
+            target_repo="kum",
+            summary="랜딩페이지 개선",
+            target_path="index.html",
+            content="<h1>New Title</h1>",
+            commit_message="feat: improve landing page"
+        )
+        self.daemon.intent_analyzer.analyze = MagicMock(return_value=mock_intent)
+        self.daemon.repo_manager.prepare_repo = MagicMock(return_value="/tmp/dummy-kum")
+        self.daemon.write_executor.execute = MagicMock(return_value={
+            "status": "success",
+            "commit_hash": "abcdef1234567890",
+            "commit_message": "feat: improve landing page",
+            "target_path": "index.html",
+            "diff": "+ <h1>New Title</h1>"
+        })
+
+        self.daemon.check_and_process_console()
+
+        update_calls = self.daemon.drive_service.files().update.call_args_list
+        console_updates = [c for c in update_calls if c[1].get("fileId") == "mock_console_doc_id"]
+        self.assertTrue(len(console_updates) >= 2)
+        media = console_updates[-1][1].get("media_body")
+        last_body = media.getbytes(0, media.size()).decode("utf-8")
+        self.assertIn("Trace ID", last_body)
+        self.assertIn("소요 시간", last_body)
+        self.assertIn("동기화 지연", last_body)
+
     def test_console_offline_shutdown(self):
         doc_content = ConsoleDocFormatter.render(status="ONLINE", input_command="!작업 kum")
         self.daemon.drive_service.files().export_media().execute.return_value = doc_content.encode("utf-8")

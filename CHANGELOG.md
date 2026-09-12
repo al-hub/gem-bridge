@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.1] - 2026-09-12
+
+### Added
+- **Pipeline Telemetry & Latency Profiling System (`core/telemetry.py`)**:
+  - `PipelineProfiler`: Step-level context timer measuring execution time (ms) across Drive export, LLM intent analysis, Git operations, and writeback.
+  - `TimeTagFormatter`: Microsecond/millisecond UTC ISO-8601 formatting, strict `ZoneInfo("Asia/Seoul")` KST conversion, and Drive-WSL cloud sync lag calculation (`sync_lag_ms`).
+  - Unique `Trace ID` generation (`tsk_YYYYMMDD_HHMMSS_xxxx`) injected across logs, `GeminiBridge/CONSOLE` doc, and `GeminiBridge/STATUS` doc for 100% end-to-end task auditability.
+- **TDD Test Suite Expansion**:
+  - Added `tests/test_telemetry.py` (5 tests covering trace IDs, UTC/KST conversions, profiler steps, and sync lag calculation).
+  - Added telemetry assertions to `tests/test_daemon_v2.py` and `tests/test_console_protocol.py` (total 41 tests passing 100%).
+
+---
+
 ## [2.1.0] - 2026-09-12
 
 ### Added

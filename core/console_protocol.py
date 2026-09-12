@@ -183,14 +183,30 @@ class ConsoleDocFormatter:
         output_content: Optional[str] = None,
         history_items: Optional[List[str]] = None,
         timestamp_str: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        duration_summary: Optional[str] = None,
+        sync_lag_ms: Optional[float] = None,
     ) -> str:
         """
         Renders the complete markdown text for CONSOLE Google Doc.
-        Optimized for smartphone Google Docs layout.
+        Optimized for smartphone Google Docs layout with telemetry metadata.
         """
         badge = cls.make_status_badge(status, timestamp_str)
         cmd_text = (input_command or DEFAULT_PLACEHOLDER).strip()
         out_text = (output_content or "*(아직 실행된 결과가 없습니다. 위 입력창에 작업을 입력하세요.)*").strip()
+
+        # Telemetry meta bar
+        telemetry_lines = []
+        if trace_id:
+            telemetry_lines.append(f"**Trace ID**: `{trace_id}`")
+        if duration_summary:
+            telemetry_lines.append(f"⏱️ **소요 시간**: `{duration_summary}`")
+        if sync_lag_ms is not None:
+            telemetry_lines.append(f"📡 **동기화 지연**: `{int(sync_lag_ms)}ms`")
+
+        meta_bar = ""
+        if telemetry_lines:
+            meta_bar = "> " + " | ".join(telemetry_lines) + "\n\n"
 
         history_list = history_items or []
         if history_list:
@@ -211,7 +227,7 @@ class ConsoleDocFormatter:
 {DELIMITER_LINE}
 
 {OUTPUT_SECTION_HEADER}
-{out_text}
+{meta_bar}{out_text}
 
 {DELIMITER_LINE}
 
