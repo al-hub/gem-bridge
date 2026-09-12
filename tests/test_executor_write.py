@@ -182,6 +182,56 @@ class TestExecutorWrite(unittest.TestCase):
         self.assertIsNotNone(first_call.get("config"))
         self.assertEqual(first_call["config"].thinking_config.thinking_budget, 0)
 
+    def test_synthesize_code_prefers_user_gemini_client(self):
+        mock_user_gemini = MagicMock()
+        mock_api_gemini = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "def add(a, b): return a + b\n"
+        mock_user_gemini.models.generate_content.return_value = mock_response
+
+        executor = WriteExecutor(
+            gemini_client=mock_api_gemini,
+            user_gemini_client=mock_user_gemini
+        )
+        result = executor.synthesize_code(
+            original_text="def add(a, b): return a - b\n",
+            instruction="Fix bug in add function",
+            target_path="calc.py"
+        )
+        self.assertEqual(result, "def add(a, b): return a + b\n")
+        self.assertEqual(mock_user_gemini.models.generate_content.call_count, 1)
+        first_call = mock_user_gemini.models.generate_content.call_args_list[0][1]
+        self.assertEqual(first_call["model"], "gemini-3.8-flash")
+        # Ensure API Key client was NOT needed
+        self.assertEqual(mock_api_gemini.models.generate_content.call_count, 0)
+
+    def test_synthesize_code_cascades_from_user_client_to_api_key_client(self):
+        mock_user_gemini = MagicMock()
+        mock_api_gemini = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "def add(a, b): return a + b\n"
+
+        # User client fails (e.g. 429 RPM limit)
+        mock_user_gemini.models.generate_content.side_effect = RuntimeError("429 RESOURCE_EXHAUSTED")
+        mock_api_gemini.models.generate_content.return_value = mock_response
+
+        executor = WriteExecutor(
+            gemini_client=mock_api_gemini,
+            user_gemini_client=mock_user_gemini
+        )
+        result = executor.synthesize_code(
+            original_text="def add(a, b): return a - b\n",
+            instruction="Fix bug in add function",
+            target_path="calc.py"
+        )
+        self.assertEqual(result, "def add(a, b): return a + b\n")
+        # User client tried 3.8-flash once
+        self.assertEqual(mock_user_gemini.models.generate_content.call_count, 1)
+        # API Key client picked up and executed
+        self.assertEqual(mock_api_gemini.models.generate_content.call_count, 1)
+        api_call = mock_api_gemini.models.generate_content.call_args_list[0][1]
+        self.assertEqual(api_call["model"], "gemini-3.8-flash")
+
 
 if __name__ == "__main__":
     unittest.main()

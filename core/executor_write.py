@@ -46,10 +46,12 @@ class WriteExecutor:
         protected_patterns: Optional[List[str]] = None,
         allow_protected_overwrite: bool = False,
         gemini_client: Optional[object] = None,
+        user_gemini_client: Optional[object] = None,
     ):
         self.protected_patterns = protected_patterns or self.DEFAULT_PROTECTED_PATTERNS
         self.allow_protected_overwrite = allow_protected_overwrite
         self.gemini_client = gemini_client
+        self.user_gemini_client = user_gemini_client
 
     def is_protected(self, rel_path: str) -> bool:
         """Checks whether a relative file path matches protected file patterns."""
@@ -114,6 +116,32 @@ class WriteExecutor:
 [기존 파일 내용]
 {original_text}
 """
+        # Tier-1 Priority: User OAuth account with gemini-3.8-flash (if available)
+        if self.user_gemini_client:
+            try:
+                logger.info("Attempting Tier-1 code synthesis with gemini-3.8-flash via User OAuth...")
+                kwargs = {"model": "gemini-3.8-flash", "contents": prompt}
+                cfg = self._build_model_config("gemini-3.8-flash")
+                if cfg is not None:
+                    kwargs["config"] = cfg
+                user_resp = self.user_gemini_client.models.generate_content(**kwargs)
+                if user_resp and user_resp.text:
+                    logger.info("Code synthesis successfully completed using gemini-3.8-flash (User OAuth).")
+                    response = user_resp
+                    text = response.text or ""
+                    text_stripped = text.strip()
+                    if text_stripped.startswith("```"):
+                        lines = text_stripped.splitlines()
+                        if len(lines) >= 2 and lines[-1].strip() == "```":
+                            text = "\n".join(lines[1:-1])
+                        elif text_stripped.endswith("```"):
+                            text = text_stripped.split("```", 1)[1].rsplit("```", 1)[0]
+                        if not text.endswith("\n") and original_text.endswith("\n"):
+                            text += "\n"
+                    return text
+            except Exception as e:
+                logger.warning(f"Tier-1 User OAuth synthesis failed with gemini-3.8-flash: {e}. Cascading to API Key fallback chain...")
+
         models_to_try = [
             "gemini-3.8-flash",
             "gemini-3.7-flash",

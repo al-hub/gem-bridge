@@ -109,7 +109,20 @@ class GemBridgeDaemonV2:
             logger.error(f"Failed to initialize Google Drive service: {e}")
             self.drive_service = None
 
-        # Initialize Gemini Client
+        # Initialize Gemini Clients:
+        # 1) User OAuth client (Tier-1 VIP for gemini-3.8-flash)
+        self.user_gemini_client = None
+        if TOKEN_PATH.exists():
+            try:
+                with open(TOKEN_PATH, "r", encoding="utf-8") as f:
+                    t_data = json.load(f)
+                user_creds = Credentials.from_authorized_user_info(t_data)
+                self.user_gemini_client = genai.Client(credentials=user_creds)
+                logger.info("User OAuth Gemini Client successfully initialized (Tier-1 Primary for gemini-3.8-flash).")
+            except Exception as e:
+                logger.warning(f"Failed to initialize User OAuth Gemini Client: {e}")
+
+        # 2) Standard API Key client (Tiered Fallback chain)
         self.gemini_client = genai.Client(api_key=self.gemini_api_key) if self.gemini_api_key else None
 
         # Initialize core components
@@ -120,11 +133,13 @@ class GemBridgeDaemonV2:
         )
         self.read_executor = ReadExecutor(
             drive_service=self.drive_service if (self.mode == "hybrid" or self.drive_backup) else None,
-            gemini_client=self.gemini_client
+            gemini_client=self.gemini_client,
+            user_gemini_client=self.user_gemini_client
         )
         self.write_executor = WriteExecutor(
             protected_patterns=self.config.get("protected_files"),
-            gemini_client=self.gemini_client
+            gemini_client=self.gemini_client,
+            user_gemini_client=self.user_gemini_client
         )
         self.exec_executor = ExecExecutor(drive_service=self.drive_service)
 

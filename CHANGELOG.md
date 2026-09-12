@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.14] - 2026-09-12
+
+### Added & Enhanced
+- **Dual-Tier Hybrid Authentication Architecture (`daemon_v2.py`, `core/executor_write.py`, `core/executor_read.py`)**:
+  - **Tier-1 VIP Priority (User Account OAuth)**:
+    - Initialized `user_gemini_client` using the user's logged-in Google OAuth2 credentials (`token.json`).
+    - Bypasses the anonymous API Key "20 Requests-Per-Day (RPD)" daily quota exhaustion, executing `gemini-3.8-flash` directly under user account authority with ~1.0s latency and rolling per-minute limits (5 RPM).
+  - **Tier-2 Preserved Fallback Chain (Standard API Key)**:
+    - Preserved the full 5-model cascade (`gemini-3.8-flash` ➔ `gemini-3.7-flash` ➔ `gemini-3.6-flash` ➔ `gemini-3.5-flash` ➔ `gemini-3.5-flash-lite`) via `gemini_client`.
+    - If user OAuth experiences transient rate limits or network issues, the system cascades into the API Key chain seamlessly within milliseconds.
+- **Test Suite Expansion (`tests/test_executor_write.py`, `tests/test_executor_read.py`)**:
+  - Added test cases verifying Tier-1 User OAuth priority selection and smooth fallback cascade to API Key client.
+  - Test suite expanded to 84 unit tests passing 100%.
+
 ## [2.1.13] - 2026-09-12
 
 ### Fixed & Optimized

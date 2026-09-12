@@ -30,10 +30,17 @@ class ReadExecutor:
         ".pyc", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".tar", ".gz"
     }
 
-    def __init__(self, drive_service, gemini_client, model_name: str = DEFAULT_MODEL):
+    def __init__(
+        self,
+        drive_service,
+        gemini_client,
+        model_name: str = DEFAULT_MODEL,
+        user_gemini_client: Optional[object] = None,
+    ):
         self.drive_service = drive_service
         self.gemini_client = gemini_client
         self.model_name = model_name
+        self.user_gemini_client = user_gemini_client
 
     def execute(
         self,
@@ -213,6 +220,23 @@ class ReadExecutor:
 3. 코드 발췌문(Snippet)이 필요할 경우 파일 경로와 함께 정확한 코드 블록을 제공하세요.
 4. 절대 가상의 내용을 지어내지 말고, 제공된 컨텍스트에 기반하여 정확하게 설명하세요.
 """
+        is_deep = getattr(intent, "model_tier", "default") == "deep"
+
+        # Tier-1 Priority: User OAuth account with gemini-3.8-flash (if available and is_deep)
+        if self.user_gemini_client and is_deep:
+            try:
+                logger.info("[READ Executor] Attempting Tier-1 report generation with gemini-3.8-flash via User OAuth...")
+                kwargs = {"model": "gemini-3.8-flash", "contents": prompt}
+                cfg = self._build_model_config("gemini-3.8-flash")
+                if cfg is not None:
+                    kwargs["config"] = cfg
+                user_resp = self.user_gemini_client.models.generate_content(**kwargs)
+                if user_resp and user_resp.text:
+                    logger.info("[READ Executor] Successfully generated report using gemini-3.8-flash (User OAuth).")
+                    return user_resp.text.strip()
+            except Exception as e:
+                logger.warning(f"[READ Executor] Tier-1 User OAuth report generation failed with gemini-3.8-flash: {e}. Cascading to API Key fallback chain...")
+
         deep_chain = [
             "gemini-3.8-flash",
             "gemini-3.7-flash",
@@ -221,7 +245,6 @@ class ReadExecutor:
             "gemini-3.5-flash-lite",
         ]
         default_chain = [self.model_name, "gemini-3.5-flash"]
-        is_deep = getattr(intent, "model_tier", "default") == "deep"
         models_to_try = deep_chain if is_deep else default_chain
 
         response = None

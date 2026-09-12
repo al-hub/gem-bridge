@@ -95,6 +95,67 @@ class TestExecutorRead(unittest.TestCase):
         self.assertIsNotNone(second_call.get("config"))
         self.assertEqual(second_call["config"].thinking_config.thinking_budget, 0)
 
+    def test_generate_report_prefers_user_gemini_client(self):
+        mock_user_gemini = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "# [보고서] User OAuth 심층 분석 결과"
+        mock_user_gemini.models.generate_content.return_value = mock_response
+
+        executor = ReadExecutor(
+            drive_service=self.mock_drive,
+            gemini_client=self.mock_gemini,
+            user_gemini_client=mock_user_gemini
+        )
+
+        intent = IntentAnalysisResult(
+            task_type=TaskType.READ,
+            summary="심층 분석 요청",
+            target_repo="test-repo",
+            query="구조 분석",
+            model_tier="deep"
+        )
+
+        result = executor.execute(self.repo_dir, intent, original_title="!분석 test-repo")
+        self.assertEqual(result["status"], "success")
+        self.assertIn("User OAuth 심층 분석 결과", result["report"])
+        self.assertEqual(mock_user_gemini.models.generate_content.call_count, 1)
+        first_call = mock_user_gemini.models.generate_content.call_args_list[0][1]
+        self.assertEqual(first_call["model"], "gemini-3.8-flash")
+        # Ensure API Key client was NOT called
+        self.assertEqual(self.mock_gemini.models.generate_content.call_count, 0)
+
+    def test_generate_report_cascades_from_user_client_to_api_key_client(self):
+        mock_user_gemini = MagicMock()
+        mock_user_gemini.models.generate_content.side_effect = RuntimeError("429 RESOURCE_EXHAUSTED")
+
+        mock_api_response = MagicMock()
+        mock_api_response.text = "# [보고서] API Key 폴백 분석 결과"
+        self.mock_gemini.models.generate_content.return_value = mock_api_response
+
+        executor = ReadExecutor(
+            drive_service=self.mock_drive,
+            gemini_client=self.mock_gemini,
+            user_gemini_client=mock_user_gemini
+        )
+
+        intent = IntentAnalysisResult(
+            task_type=TaskType.READ,
+            summary="심층 분석 요청",
+            target_repo="test-repo",
+            query="구조 분석",
+            model_tier="deep"
+        )
+
+        result = executor.execute(self.repo_dir, intent, original_title="!분석 test-repo")
+        self.assertEqual(result["status"], "success")
+        self.assertIn("API Key 폴백 분석 결과", result["report"])
+        # User client tried 3.8-flash once
+        self.assertEqual(mock_user_gemini.models.generate_content.call_count, 1)
+        # API Key client picked up and executed
+        self.assertEqual(self.mock_gemini.models.generate_content.call_count, 1)
+        api_call = self.mock_gemini.models.generate_content.call_args_list[0][1]
+        self.assertEqual(api_call["model"], "gemini-3.8-flash")
+
 
 if __name__ == "__main__":
     unittest.main()
