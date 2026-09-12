@@ -11,6 +11,8 @@ from core.executor_write import WriteExecutor, ProtectedFileError
 from core.executor_exec import ExecExecutor
 from core.console_protocol import ConsoleProtocolParser, ConsoleDocFormatter
 from core.telemetry import TimeTagFormatter, PipelineProfiler
+from core.drive_storage import DriveStorageManager
+from core.janitor import StorageJanitor
 
 __all__ = [
     "__version__",
@@ -28,4 +30,6 @@ __all__ = [
     "ConsoleDocFormatter",
     "TimeTagFormatter",
     "PipelineProfiler",
+    "DriveStorageManager",
+    "StorageJanitor",
 ]

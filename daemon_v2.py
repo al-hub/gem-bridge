@@ -25,6 +25,8 @@ from core.console_protocol import (
     OUTPUT_SECTION_HEADER,
 )
 from core.telemetry import TimeTagFormatter, PipelineProfiler
+from core.drive_storage import DriveStorageManager
+from core.janitor import StorageJanitor
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -68,7 +70,10 @@ class GemBridgeDaemonV2:
     determines intent, dynamically prepares repositories, and dispatches to executors.
     """
 
-    SYSTEM_DOC_PREFIXES = ["[보고서]", "[완료]", "[오류]", "[실행결과]"]
+    SYSTEM_DOC_PREFIXES = [
+        "[보고서]", "[완료]", "[오류]", "[실행결과]",
+        "[📄분석", "[✅커밋", "[💻실행", "[⚠️오류", "[📌"
+    ]
     TRIGGER_KEYWORDS = ["!", "깃", "task", "작업", "분석", "실행", "gem-bridge", "보고서", "console"]
 
     def __init__(self, config: Optional[dict] = None):
@@ -108,6 +113,9 @@ class GemBridgeDaemonV2:
 
         # CONSOLE and STATUS doc tracking
         self.folder_id: Optional[str] = self._find_or_create_folder()
+        self.storage_manager = DriveStorageManager(self.drive_service, self.folder_id) if self.drive_service and self.folder_id else None
+        self.janitor = StorageJanitor(self.drive_service, self.folder_id, storage_manager=self.storage_manager) if self.drive_service and self.folder_id else None
+        self._last_janitor_run_time: float = time.time()
         self.status_doc_id: Optional[str] = self._init_status_doc()
         self.console_doc_id: Optional[str] = None
         self._last_console_content_hash: Optional[str] = None
@@ -431,7 +439,9 @@ class GemBridgeDaemonV2:
 
             with profiler.step("executor"):
                 if intent.task_type == TaskType.READ:
-                    result = self.read_executor.execute(repo_path, intent, original_title="CONSOLE_READ", parent_id=self.folder_id)
+                    rep_folder = self.storage_manager.get_destination_folder("reports") if self.storage_manager else self.folder_id
+                    doc_title = self.storage_manager.format_mobile_title(TaskType.READ, intent.target_repo, intent.summary) if self.storage_manager else "CONSOLE_READ"
+                    result = self.read_executor.execute(repo_path, intent, original_title=doc_title, parent_id=rep_folder)
                     output_str = (
                         f"### 📄 [분석 보고서 요약]\n"
                         f"- 대상 저장소: `{intent.target_repo}`\n"
@@ -449,6 +459,10 @@ class GemBridgeDaemonV2:
 
                 elif intent.task_type == TaskType.WRITE:
                     result = self.write_executor.execute(repo_path, intent)
+                    commit_folder = self.storage_manager.get_destination_folder("commits") if self.storage_manager else self.folder_id
+                    doc_title = self.storage_manager.format_mobile_title(TaskType.WRITE, intent.target_repo, result.get('commit_message') or intent.summary) if self.storage_manager else f"[완료] {intent.summary}"
+                    self._create_completion_doc(doc_title, result, parent_id=commit_folder)
+
                     diff_preview = result.get('diff') or '(신규 파일)'
                     if len(diff_preview) > 1200:
                         diff_preview = diff_preview[:1200] + "\n...(생략)..."
@@ -468,19 +482,27 @@ class GemBridgeDaemonV2:
                         action_message = f"`{result.get('target_path')}` 변경 및 Git 반영 완료 ({result.get('commit_hash', '')[:7]})"
 
                 elif intent.task_type == TaskType.EXEC:
-                    result = self.exec_executor.execute(repo_path, intent, original_title="CONSOLE_EXEC", parent_id=self.folder_id)
-                    console_out = (result.get('stdout', '') + '\n' + result.get('stderr', '')).strip()
-                    if len(console_out) > 1200:
-                        console_out = console_out[:1200] + "\n...(생략)..."
-                    output_str = (
-                        f"### 💻 [명령 실행 완료]\n"
-                        f"- 명령어: `{intent.exec_command}`\n"
-                        f"- 종료 코드: {result.get('exit_code')}\n\n"
-                        f"```text\n{console_out or '(출력 없음)'}\n```"
-                    )
-                    history_entry = f"- [{now_str[5:16]}] [💻 실행] `{intent.exec_command}` (종료: {result.get('exit_code')}, #{trace_id[-4:]})"
-                    action_status = "READ_SUCCESS"
-                    action_message = f"명령어 `{intent.exec_command}` 실행 완료 (종료 코드: {result.get('exit_code')})"
+                    if self._is_janitor_command(intent.exec_command or cmd):
+                        output_str = self._execute_janitor_command(intent.exec_command or cmd)
+                        history_entry = f"- [{now_str[5:16]}] [🧹 정리] {cmd[:25]} (#{trace_id[-4:]})"
+                        action_status = "READ_SUCCESS"
+                        action_message = "드라이브 생명주기 및 스토리지 정리 완료"
+                    else:
+                        log_folder = self.storage_manager.get_destination_folder("logs") if self.storage_manager else self.folder_id
+                        doc_title = self.storage_manager.format_mobile_title(TaskType.EXEC, intent.target_repo, intent.summary or intent.exec_command) if self.storage_manager else "CONSOLE_EXEC"
+                        result = self.exec_executor.execute(repo_path, intent, original_title=doc_title, parent_id=log_folder)
+                        console_out = (result.get('stdout', '') + '\n' + result.get('stderr', '')).strip()
+                        if len(console_out) > 1200:
+                            console_out = console_out[:1200] + "\n...(생략)..."
+                        output_str = (
+                            f"### 💻 [명령 실행 완료]\n"
+                            f"- 명령어: `{intent.exec_command}`\n"
+                            f"- 종료 코드: {result.get('exit_code')}\n\n"
+                            f"```text\n{console_out or '(출력 없음)'}\n```"
+                        )
+                        history_entry = f"- [{now_str[5:16]}] [💻 실행] `{intent.exec_command}` (종료: {result.get('exit_code')}, #{trace_id[-4:]})"
+                        action_status = "READ_SUCCESS"
+                        action_message = f"명령어 `{intent.exec_command}` 실행 완료 (종료 코드: {result.get('exit_code')})"
 
             # 9. Update History list (keep recent 3)
             history.insert(0, history_entry)
@@ -578,6 +600,46 @@ class GemBridgeDaemonV2:
         except Exception as e:
             logger.warning(f"Could not sync task document result to CONSOLE: {e}")
 
+    @staticmethod
+    def _is_janitor_command(cmd: str) -> bool:
+        """Determines if a command is a maintenance/clean trigger."""
+        clean = (cmd or "").strip().lower()
+        patterns = [
+            "clean logs", "clean trash", "clean drive", "storage stats",
+            "드라이브 정리", "로그 정리", "휴지통 비워", "스토리지 통계", "드라이브 통계"
+        ]
+        return any(p in clean for p in patterns)
+
+    def _execute_janitor_command(self, cmd: str) -> str:
+        """Executes maintenance and cleanup commands, returning human-friendly summary text."""
+        if not self.janitor:
+            return "스토리지 매니저가 초기화되지 않았습니다."
+        clean = (cmd or "").strip().lower()
+        if "trash" in clean or "휴지통" in clean:
+            purged = self.janitor.purge_trash(max_files=50)
+            return f"🗑️ **[휴지통 영구 삭제 완료]**\n- 영구 삭제된 파일: {purged}개\n- AI 검색 노이즈 원천 차단 완료."
+        elif "stats" in clean or "통계" in clean:
+            stats = self.janitor.get_storage_stats()
+            return (
+                f"📊 **[드라이브 스토리지 현황]**\n"
+                f"- 보고서 (reports/): {stats.get('reports', 0)}개\n"
+                f"- 커밋 확인서 (commits/): {stats.get('commits', 0)}개\n"
+                f"- 실행 로그 (logs/): {stats.get('logs', 0)}개\n"
+                f"- 아카이브 (archive/): {stats.get('archive', 0)}개\n"
+                f"- 루트 파일 (CONSOLE/STATUS 등): {stats.get('root', 0)}개\n"
+                f"- 휴지통 파일: {stats.get('trash', 0)}개"
+            )
+        else:
+            cleaned = self.janitor.clean_expired_documents()
+            purged = self.janitor.purge_trash(max_files=30)
+            stats = self.janitor.get_storage_stats()
+            return (
+                f"🧹 **[드라이브 정리 완료]**\n"
+                f"- 만료 정리: {cleaned}\n"
+                f"- 휴지통 영구 삭제: {purged}개\n"
+                f"- 현재 보관 현황: 보고서 {stats.get('reports', 0)}개, 커밋 {stats.get('commits', 0)}개, 로그 {stats.get('logs', 0)}개"
+            )
+
     def find_candidate_documents(self) -> List[dict]:
         """Queries Google Drive for pending task documents, strictly ignoring CONSOLE and STATUS."""
         if not self.drive_service:
@@ -671,7 +733,9 @@ class GemBridgeDaemonV2:
 
             # 4. Dispatch to Executor based on TaskType
             if intent.task_type == TaskType.READ:
-                result = self.read_executor.execute(repo_path, intent, original_title=doc_name, parent_id=parent_id)
+                rep_folder = self.storage_manager.get_destination_folder("reports") if self.storage_manager else parent_id
+                doc_title = self.storage_manager.format_mobile_title(TaskType.READ, intent.target_repo, intent.summary) if self.storage_manager else doc_name
+                result = self.read_executor.execute(repo_path, intent, original_title=doc_title, parent_id=rep_folder)
                 logger.info(f"[READ] Generated report doc: {result.get('doc_name')} ({result.get('doc_id')})")
                 self._update_status(
                     f"# 📄 [분석 보고서 완료] {doc_name}\n\n"
@@ -702,8 +766,10 @@ class GemBridgeDaemonV2:
                 logger.info(
                     f"[WRITE] Committed {result.get('commit_hash', '')[:7]}: {result.get('commit_message')} on {result.get('target_path')}"
                 )
-                # Upload brief completion confirmation to Google Drive
-                self._create_completion_doc(doc_name, result, parent_id=parent_id)
+                # Upload brief completion confirmation to Google Drive in commits/ folder
+                commit_folder = self.storage_manager.get_destination_folder("commits") if self.storage_manager else parent_id
+                doc_title = self.storage_manager.format_mobile_title(TaskType.WRITE, intent.target_repo, result.get('commit_message') or intent.summary) if self.storage_manager else doc_name
+                self._create_completion_doc(doc_title, result, parent_id=commit_folder)
                 self._update_status(
                     f"# ✅ [작업 완료] {doc_name}\n\n"
                     f"- 완료 시각: {time.strftime('%Y-%m-%d %H:%M:%S')} KST\n"
@@ -732,31 +798,48 @@ class GemBridgeDaemonV2:
                 )
 
             elif intent.task_type == TaskType.EXEC:
-                result = self.exec_executor.execute(repo_path, intent, original_title=doc_name, parent_id=parent_id)
-                logger.info(f"[EXEC] Command completed with exit code {result.get('exit_code')}")
-                self._update_status(
-                    f"# 💻 [명령 실행 완료] {doc_name}\n\n"
-                    f"- 완료 시각: {time.strftime('%Y-%m-%d %H:%M:%S')} KST\n"
-                    f"- 명령어: `{intent.exec_command}`\n"
-                    f"- 종료 코드: {result.get('exit_code')}\n\n"
-                    f"### 실행 콘솔 출력\n"
-                    f"```text\n{(result.get('stdout', '') + chr(10) + result.get('stderr', '')).strip() or '(출력 없음)'}\n```\n"
-                )
-                output_str = (
-                    f"### 💻 [명령 실행 완료]\n"
-                    f"- 대상 저장소: `{intent.target_repo}`\n"
-                    f"- 명령어: `{intent.exec_command}`\n"
-                    f"- 종료 코드: `{result.get('exit_code')}`\n\n"
-                    f"#### 실행 콘솔 출력\n"
-                    f"```text\n{(result.get('stdout', '') + chr(10) + result.get('stderr', '')).strip() or '(출력 없음)'}\n```"
-                )
-                self._sync_task_result_to_console(
-                    output_str=output_str,
-                    action_status="READ_SUCCESS",
-                    action_message=f"명령어 `{intent.exec_command}` 실행 완료 (종료 코드: {result.get('exit_code')})",
-                    history_entry=f"- [{time.strftime('%m-%d %H:%M')}] [💻 실행] {intent.exec_command} (#{doc_id[-4:] if doc_id else 'task'})",
-                    trace_id=f"tsk_{doc_id[-6:] if doc_id else int(time.time())}",
-                )
+                if self._is_janitor_command(intent.exec_command or doc_name):
+                    output_str = self._execute_janitor_command(intent.exec_command or doc_name)
+                    self._update_status(
+                        f"# 🧹 [스토리지 정리 완료] {doc_name}\n\n"
+                        f"- 완료 시각: {time.strftime('%Y-%m-%d %H:%M:%S')} KST\n\n"
+                        f"{output_str}"
+                    )
+                    self._sync_task_result_to_console(
+                        output_str=output_str,
+                        action_status="READ_SUCCESS",
+                        action_message="드라이브 생명주기 및 스토리지 정리 완료",
+                        history_entry=f"- [{time.strftime('%m-%d %H:%M')}] [🧹 정리] {doc_name[:25]} (#{doc_id[-4:] if doc_id else 'task'})",
+                        trace_id=f"tsk_{doc_id[-6:] if doc_id else int(time.time())}",
+                    )
+                else:
+                    log_folder = self.storage_manager.get_destination_folder("logs") if self.storage_manager else parent_id
+                    doc_title = self.storage_manager.format_mobile_title(TaskType.EXEC, intent.target_repo, intent.summary or intent.exec_command) if self.storage_manager else doc_name
+                    result = self.exec_executor.execute(repo_path, intent, original_title=doc_title, parent_id=log_folder)
+                    logger.info(f"[EXEC] Command completed with exit code {result.get('exit_code')}")
+                    self._update_status(
+                        f"# 💻 [명령 실행 완료] {doc_name}\n\n"
+                        f"- 완료 시각: {time.strftime('%Y-%m-%d %H:%M:%S')} KST\n"
+                        f"- 명령어: `{intent.exec_command}`\n"
+                        f"- 종료 코드: {result.get('exit_code')}\n\n"
+                        f"### 실행 콘솔 출력\n"
+                        f"```text\n{(result.get('stdout', '') + chr(10) + result.get('stderr', '')).strip() or '(출력 없음)'}\n```\n"
+                    )
+                    output_str = (
+                        f"### 💻 [명령 실행 완료]\n"
+                        f"- 대상 저장소: `{intent.target_repo}`\n"
+                        f"- 명령어: `{intent.exec_command}`\n"
+                        f"- 종료 코드: `{result.get('exit_code')}`\n\n"
+                        f"#### 실행 콘솔 출력\n"
+                        f"```text\n{(result.get('stdout', '') + chr(10) + result.get('stderr', '')).strip() or '(출력 없음)'}\n```"
+                    )
+                    self._sync_task_result_to_console(
+                        output_str=output_str,
+                        action_status="READ_SUCCESS",
+                        action_message=f"명령어 `{intent.exec_command}` 실행 완료 (종료 코드: {result.get('exit_code')})",
+                        history_entry=f"- [{time.strftime('%m-%d %H:%M')}] [💻 실행] {intent.exec_command} (#{doc_id[-4:] if doc_id else 'task'})",
+                        trace_id=f"tsk_{doc_id[-6:] if doc_id else int(time.time())}",
+                    )
 
             # 5. Move original document to trash
             self._trash_document(doc_id, doc_name)
@@ -786,7 +869,10 @@ class GemBridgeDaemonV2:
         """Creates a readable completion document on Drive."""
         if not self.drive_service:
             return
-        doc_title = f"[완료] {original_title}"
+        if original_title.startswith("[✅커밋:"):
+            doc_title = original_title
+        else:
+            doc_title = f"[완료] {original_title}"
         content = f"""# {doc_title}
 
 ## 작업 반영 완료 안내
@@ -802,10 +888,11 @@ class GemBridgeDaemonV2:
 ```
 """
         try:
+            target_parent = parent_id or (self.storage_manager.get_destination_folder("commits") if self.storage_manager else self.folder_id)
             media = MediaInMemoryUpload(content.encode("utf-8"), mimetype="text/plain", resumable=True)
             body = {"name": doc_title, "mimeType": "application/vnd.google-apps.document"}
-            if parent_id:
-                body["parents"] = [parent_id]
+            if target_parent:
+                body["parents"] = [target_parent]
             self.drive_service.files().create(
                 body=body,
                 media_body=media,
@@ -819,7 +906,13 @@ class GemBridgeDaemonV2:
         if not self.drive_service:
             return
 
-        error_title = f"[오류] {doc_name}"
+        if self.storage_manager:
+            error_title = self.storage_manager.format_mobile_title(TaskType.READ, "error", doc_name, is_error=True)
+            target_parent = self.storage_manager.get_destination_folder("logs/errors", auto_monthly=False)
+        else:
+            error_title = f"[오류] {doc_name}"
+            target_parent = parent_id or self.folder_id
+
         error_md = f"""# [오류 보고서] {doc_name}
 
 작업을 수행하는 도중 예외가 발생하여 중단되었습니다.
@@ -840,8 +933,8 @@ class GemBridgeDaemonV2:
         try:
             media = MediaInMemoryUpload(error_md.encode("utf-8"), mimetype="text/plain", resumable=True)
             body = {"name": error_title, "mimeType": "application/vnd.google-apps.document"}
-            if parent_id:
-                body["parents"] = [parent_id]
+            if target_parent:
+                body["parents"] = [target_parent]
             self.drive_service.files().create(
                 body=body,
                 media_body=media,
@@ -867,7 +960,16 @@ class GemBridgeDaemonV2:
             self._update_console_heartbeat()
             self._last_heartbeat_time = time.time()
 
-        # 3. Check legacy or ephemeral task documents
+        # 3. Periodic background janitor cleanup (every 6 hours)
+        if self.janitor and (time.time() - self._last_janitor_run_time > 21600):
+            try:
+                logger.info("[Janitor] Starting scheduled background cleanup cycle...")
+                self.janitor.clean_expired_documents()
+                self._last_janitor_run_time = time.time()
+            except Exception as e:
+                logger.warning(f"[Janitor] Scheduled cleanup error: {e}")
+
+        # 4. Check legacy or ephemeral task documents
         candidates = self.find_candidate_documents()
         if candidates:
             logger.info(f"Found {len(candidates)} candidate document(s).")

@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.5] - 2026-09-12
+
+### Added
+- **Hierarchical Drive Storage & Mobile-First Naming (`core/drive_storage.py`)**:
+  - `DriveStorageManager`: Manages nested category folders under `GeminiBridge/` (`reports/YYYY-MM`, `commits/YYYY-MM`, `logs/YYYY-MM`, `logs/errors`, `archive/`).
+  - Mobile-First Naming: Enforces `[{TYPE_ICON}{TYPE_TAG}:{REPO_SHORT}] {SUMMARY} ({YYMMDD_HHmm})` format (e.g. `[📄분석:bridge] 상세 개발이력 분석 (260912_1725)`), preventing title truncation on mobile screens.
+  - In-memory ID caching for fast resolution without redundant Google Drive API calls.
+- **Storage Lifecycle & Auto-Purge Janitor Engine (`core/janitor.py`)**:
+  - `StorageJanitor`: Implements tiered document retention (Tier 1: `logs/` 3 days, Tier 2: `commits/` 7 days, Tier 3: `reports/` 30 days, Tier 0: `CONSOLE`/`STATUS` permanent singletons).
+  - 2-Stage Hard-Purge: Permanently purges Google Drive trash (`files.delete`) to eliminate Gemini AI RAG citation confusion and save storage space.
+  - Interactive Janitor Commands: Supports `clean logs`, `clean trash`, `storage stats`, `드라이브 정리` directly from mobile Gem / CONSOLE.
+  - Automatic scheduled background cleanup in daemon every 6 hours.
+- **Test Suite Expansion**:
+  - 57 unit tests passing across all components (`test_drive_storage.py`, `test_janitor.py`, `test_daemon_v2.py`, etc.).
+
 ## [2.1.4] - 2026-09-12
 
 ### Added

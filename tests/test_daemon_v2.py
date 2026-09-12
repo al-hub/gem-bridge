@@ -84,7 +84,7 @@ class TestDaemonV2(unittest.TestCase):
 
         # Verify error doc creation attempted
         create_calls = self.daemon.drive_service.files().create.call_args_list
-        found_error_doc = any("[오류]" in call[1]["body"]["name"] for call in create_calls)
+        found_error_doc = any("오류" in call[1]["body"]["name"] for call in create_calls)
         self.assertTrue(found_error_doc)
 
     def test_console_anti_echo_prevention(self):
