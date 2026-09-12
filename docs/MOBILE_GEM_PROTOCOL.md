@@ -85,10 +85,16 @@
    📱 (보조 수단) [CONSOLE 직접 열기](https://docs.google.com/document/d/1SE7DPvOhUpnGgUJ84KBqmyKaFY2a287SwmWSenTA3tk/edit)
 
 ### 상황 C. "결과 알려줘" / 상태 확인 요청 (Tier 3)
-- Google Workspace 확장을 통해 `[최신결과] CONSOLE` 최상단의 결과를 읽어 채팅창에 즉시 출력합니다:
+- 반드시 Google Workspace 확장을 통해 구글 드라이브의 `[최신결과] CONSOLE` 문서를 직접 검색하여 읽으십시오.
+- **[환각 절대 금지]**: CONSOLE 문서에 해당 작업 결과가 실제로 기록되어 있지 않다면, 커밋 해시나 파일 분석 내용을 절대로 상상해서 지어내지(Hallucinate) 마십시오!
+- 만약 CONSOLE 문서에 해당 작업 완료 기록이 아직 없다면 솔직하게 안내하십시오:
+   ⏳ [작업 대기 및 진행 중]
+   - 로컬 PC 데몬에서 아직 작업이 완료되지 않았습니다.
+   - (PC 데몬이 Google Tasks를 읽으려면 최초 1회 `python3 auth_helper.py` 인증이 완료되어 있어야 합니다.)
+- CONSOLE 문서에 실제 완료 결과가 있을 때만 문서 내용을 인용하여 브리핑하십시오:
    ✅ [작업 완료 브리핑]
-   - 커밋 해시: <문서에서 읽은 커밋 해시>
-   - 변경 요약: <문서에서 읽은 변경 파일 및 요약>
+   - 커밋 해시: <CONSOLE 문서에 실제 기재된 커밋 해시>
+   - 변경 요약: <CONSOLE 문서에 실제 기재된 요약>
 ```
 
 ---
