@@ -1,13 +1,17 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 from daemon_v2 import GemBridgeDaemonV2
 from core.intent_analyzer import IntentAnalysisResult, TaskType
 from core.console_protocol import ConsoleProtocolParser, ConsoleDocFormatter
+from core.session_manager import SessionManager
 
 
 class TestDaemonV2(unittest.TestCase):
 
     def setUp(self):
+        self.temp_session_dir = tempfile.TemporaryDirectory()
         self.config = {
             "poll_interval_seconds": 1,
             "repositories": {
@@ -19,9 +23,13 @@ class TestDaemonV2(unittest.TestCase):
             self.mock_drive = MagicMock()
             mock_get_drive.return_value = self.mock_drive
             self.daemon = GemBridgeDaemonV2(self.config)
+            self.daemon.session_manager = SessionManager(storage_dir=Path(self.temp_session_dir.name))
             self.daemon.console_doc_id = "mock_console_doc_id"
             self.daemon.status_doc_id = "mock_status_doc_id"
             self.daemon.drive_service.reset_mock()
+
+    def tearDown(self):
+        self.temp_session_dir.cleanup()
 
     def test_filter_candidate_documents_excludes_system_and_console(self):
         self.daemon.drive_service.files().list().execute.return_value = {

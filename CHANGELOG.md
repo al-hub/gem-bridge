@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.16] - 2026-09-13
+
+### Fixed & Optimized
+- **Target Repository Normalization in Session Continuity (`core/session_manager.py`, `daemon_v2.py`)**:
+  - Implemented `normalize_repo_name()` stripping protocol/domain/`.git` prefixes, guaranteeing that full git URLs (e.g. `https://github.com/al-hub/gem-bridge`) and short repo identifiers (`gem-bridge`) seamlessly resolve to the exact same compound session key (`tasks:gem-bridge`).
+- **Single-Batch Context Compaction in `SessionCompactor` (`core/session_manager.py`)**:
+  - Replaced sequential 1-by-1 turn consolidation with unified single-batch folding (`_fold_turns`), consolidating all overflow turns outside the $N=2$ sliding window in a single Flash-Lite call and eliminating round-trip latency.
+- **`ExecExecutor` Exit Code Evaluation Bug Fix (`core/executor_exec.py`, `daemon_v2.py`)**:
+  - Fixed type mismatch where `exit_code` returned as `str` (`"0"`) was evaluated with `exit_code == 0` (evaluating to `False`), standardizing integer casting and string-safe comparison (`str(exit_code) in ("0", 0)`). Successful shell commands now reliably yield `[✅완료: OK]`.
+- **Test Suite Session Isolation (`tests/test_daemon_v2.py`)**:
+  - Isolated `SessionManager` in daemon unit tests using `tempfile.TemporaryDirectory()`, preventing mock test data from polluting production `.sessions/sessions.db`.
+
 ## [2.1.15] - 2026-09-13
 
 ### Added & Enhanced

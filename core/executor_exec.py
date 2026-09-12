@@ -122,7 +122,7 @@ class ExecExecutor:
             "status": "success" if success else "failed",
             "task_type": "EXEC",
             "command": command,
-            "exit_code": str(exit_code),
+            "exit_code": int(exit_code) if str(exit_code).lstrip("-").isdigit() else exit_code,
             "stdout": stdout,
             "stderr": stderr,
             "doc_id": doc_id,

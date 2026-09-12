@@ -403,53 +403,65 @@ class SessionCompactor:
         turns_to_fold = turns[:-self.sliding_window_n]
         retained_turns = turns[-self.sliding_window_n:]
 
-        for t in turns_to_fold:
-            self._fold_turn(session, t)
-
+        self._fold_turns(session, turns_to_fold)
         return retained_turns
 
-    def _fold_turn(self, session: SessionState, turn: Turn) -> None:
-        delta = f"- [Turn #{turn.turn_index} {turn.task_type.value}] {turn.summary}"
-        if turn.target_path:
-            delta += f" (파일: `{turn.target_path}`)"
-        if turn.commit_hash:
-            delta += f" (커밋: `{turn.commit_hash[:7]}`)"
-        if turn.exit_code is not None:
-            delta += f" (종료코드: `{turn.exit_code}`)"
+    def _fold_turns(self, session: SessionState, turns: List[Turn]) -> None:
+        if not turns:
+            return
+
+        deltas = []
+        for turn in turns:
+            delta = f"- [Turn #{turn.turn_index} {turn.task_type.value}] {turn.summary}"
+            if turn.target_path:
+                delta += f" (파일: `{turn.target_path}`)"
+            if turn.commit_hash:
+                delta += f" (커밋: `{turn.commit_hash[:7]}`)"
+            if turn.exit_code is not None:
+                delta += f" (종료코드: `{turn.exit_code}`)"
+            deltas.append(delta)
+
+        deltas_str = "\n".join(deltas)
 
         if not self.gemini_client:
             # Deterministic folding fallback
             if session.rolling_summary:
-                session.rolling_summary = f"{session.rolling_summary}\n{delta}".strip()
+                session.rolling_summary = f"{session.rolling_summary}\n{deltas_str}".strip()
             else:
-                session.rolling_summary = delta.strip()
-        else:
-            try:
-                prompt = f"""다음 완료된 개발 턴을 기존 세션 누적 요약(Rolling Summary)에 병합하세요.
-코드 전문이나 Diff는 일체 포함하지 말고, 핵심 결정사항과 파일 변경 팩트만 남기세요.
+                session.rolling_summary = deltas_str.strip()
+            return
+
+        try:
+            turns_block = "\n".join(
+                f"[병합할 턴 #{t.turn_index}]\n"
+                f"- 작업 유형: {t.task_type.value}\n"
+                f"- 지시: {t.user_raw_input}\n"
+                f"- 요약: {t.summary}\n"
+                f"- 파일: {t.target_path or 'N/A'}\n"
+                f"- 커밋: {t.commit_hash or 'N/A'}\n"
+                f"- 종료코드: {t.exit_code if t.exit_code is not None else 'N/A'}"
+                for t in turns
+            )
+            prompt = f"""다음 완료된 개발 턴 목록을 기존 세션 누적 요약(Rolling Summary)에 병합하세요.
+코드 전문이나 Diff는 일체 포함하지 말고, 핵심 결정사항과 파일 변경 팩트만 남겨 1,500자 이내로 요약하세요.
 
 [기존 요약]
 {session.rolling_summary or '(이전 요약 없음)'}
 
-[병합할 턴 #{turn.turn_index}]
-- 작업 유형: {turn.task_type.value}
-- 지시: {turn.user_raw_input}
-- 요약: {turn.summary}
-- 파일: {turn.target_path or 'N/A'}
-- 커밋: {turn.commit_hash or 'N/A'}
-- 종료코드: {turn.exit_code if turn.exit_code is not None else 'N/A'}
+[추가로 병합할 턴들]
+{turns_block}
 """
-                resp = self.gemini_client.models.generate_content(
-                    model="gemini-3.5-flash-lite",
-                    contents=prompt
-                )
-                if resp and resp.text:
-                    session.rolling_summary = resp.text.strip()
-                else:
-                    session.rolling_summary = f"{session.rolling_summary}\n{delta}".strip() if session.rolling_summary else delta.strip()
-            except Exception as e:
-                logger.warning(f"Flash-Lite consolidation failed: {e}. Using deterministic fallback.")
-                session.rolling_summary = f"{session.rolling_summary}\n{delta}".strip() if session.rolling_summary else delta.strip()
+            resp = self.gemini_client.models.generate_content(
+                model="gemini-3.5-flash-lite",
+                contents=prompt
+            )
+            if resp and resp.text:
+                session.rolling_summary = resp.text.strip()
+            else:
+                session.rolling_summary = f"{session.rolling_summary}\n{deltas_str}".strip() if session.rolling_summary else deltas_str.strip()
+        except Exception as e:
+            logger.warning(f"Flash-Lite consolidation failed: {e}. Using deterministic fallback.")
+            session.rolling_summary = f"{session.rolling_summary}\n{deltas_str}".strip() if session.rolling_summary else deltas_str.strip()
 
 
 class SessionManager:
@@ -476,8 +488,20 @@ class SessionManager:
         self.compactor = SessionCompactor(sliding_window_n=sliding_window_n, gemini_client=gemini_client)
         self.sliding_window_n = sliding_window_n
 
+    @staticmethod
+    def normalize_repo_name(target_repo: str) -> str:
+        """Normalizes full git URLs or paths to standard base repo name."""
+        if not target_repo:
+            return "gem-bridge"
+        clean = target_repo.strip().rstrip("/")
+        if clean.endswith(".git"):
+            clean = clean[:-4]
+        parts = re.split(r"[/:]", clean)
+        return parts[-1] if parts else clean
+
     def get_or_resume_session(self, channel: str, target_repo: str, incoming_input: str = "") -> SessionState:
-        session_key = f"{channel}:{target_repo}"
+        norm_repo = self.normalize_repo_name(target_repo)
+        session_key = f"{channel}:{norm_repo}"
         clean_input = incoming_input.strip()
 
         # Check explicit reset
@@ -485,7 +509,7 @@ class SessionManager:
         if is_reset:
             self.store.archive_session(session_key)
 
-        session = self.store.get_or_create_session(channel=channel, target_repo=target_repo, session_key=session_key)
+        session = self.store.get_or_create_session(channel=channel, target_repo=norm_repo, session_key=session_key)
         return session
 
     def record_turn(

@@ -878,7 +878,7 @@ class GemBridgeDaemonV2:
                 available_repos=available_repos,
                 session_context=session_ctx
             )
-            if session and intent.target_repo != session.target_repo:
+            if session and self.session_manager.normalize_repo_name(intent.target_repo) != session.target_repo:
                 session = self.session_manager.get_or_resume_session(
                     channel=channel,
                     target_repo=intent.target_repo,
@@ -1194,7 +1194,7 @@ class GemBridgeDaemonV2:
                         available_repos=available_repos,
                         session_context=session_ctx
                     )
-                    if session and intent.target_repo != session.target_repo:
+                    if session and self.session_manager.normalize_repo_name(intent.target_repo) != session.target_repo:
                         session = self.session_manager.get_or_resume_session(
                             channel=channel,
                             target_repo=intent.target_repo,
@@ -1360,7 +1360,7 @@ class GemBridgeDaemonV2:
                             )
                             self._sync_task_result_to_console(
                                 output_str=output_str,
-                                action_status="EXEC_SUCCESS" if result.get('exit_code') == 0 else "EXEC_ERROR",
+                                action_status="EXEC_SUCCESS" if str(result.get('exit_code')) == "0" else "EXEC_ERROR",
                                 action_message=f"명령어 `{intent.exec_command}` 실행 완료 (code: {result.get('exit_code')})",
                                 history_entry=f"- [{now_str[5:16]}] [💻 Tasks실행] {intent.summary or intent.exec_command} (#{trace_id[-4:]})",
                                 trace_id=trace_id,
@@ -1371,7 +1371,7 @@ class GemBridgeDaemonV2:
                         if len(console_output) > 2000:
                             console_output = console_output[:2000] + "\n...(이하 출력 생략)..."
 
-                        is_exec_ok = (exit_code == 0)
+                        is_exec_ok = (str(exit_code) == "0")
                         turn_num = len(session.turns) if session else 1
                         session_badge = f"\n[📌 세션: {intent.target_repo} ({turn_num}턴 진행 중 / 30분 유효)]\n" if session else ""
                         feedback_notes = (
