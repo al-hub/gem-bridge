@@ -47,7 +47,8 @@ class ReadExecutor:
         repo_path: Path,
         intent: IntentAnalysisResult,
         original_title: str = "",
-        parent_id: Optional[str] = None
+        parent_id: Optional[str] = None,
+        session_context: Optional[str] = None
     ) -> Dict[str, str]:
         """
         Executes a READ task without any repository modifications or git push.
@@ -60,7 +61,7 @@ class ReadExecutor:
         repo_context = self._gather_repo_context(repo_path, intent.target_files_or_dirs)
 
         # 2. Generate analysis report with Gemini
-        report_content = self._generate_report(repo_path, intent, repo_context)
+        report_content = self._generate_report(repo_path, intent, repo_context, session_context=session_context)
 
         # 3. Create Google Doc on Google Drive
         clean_title = self._clean_doc_title(original_title or intent.summary)
@@ -194,10 +195,12 @@ class ReadExecutor:
         self,
         repo_path: Path,
         intent: IntentAnalysisResult,
-        repo_context: str
+        repo_context: str,
+        session_context: Optional[str] = None
     ) -> str:
         """Calls Gemini tiered models to produce a comprehensive markdown report."""
         user_query = intent.query or intent.summary
+        session_block = f"\n[이전 연속 작업 세션 맥락]\n{session_context.strip()}\n" if session_context and session_context.strip() else ""
         prompt = f"""당신은 전문 수석 소프트웨어 엔지니어 겸 코드베이스 분석 전문가입니다.
 사용자의 분석 요청에 맞춰 로컬 저장소 소스코드 컨텍스트를 바탕으로 상세하고 체계적인 분석 보고서를 작성하세요.
 
@@ -205,7 +208,7 @@ class ReadExecutor:
 - 대상 저장소: {repo_path.name} ({repo_path})
 - 분석 주제/질문: {user_query}
 - 요청 요약: {intent.summary}
-
+{session_block}
 [수집된 소스코드 및 저장소 컨텍스트]
 {repo_context}
 

@@ -90,7 +90,8 @@ class IntentAnalyzer:
         self,
         raw_text: str,
         title: str = "",
-        available_repos: Optional[List[str]] = None
+        available_repos: Optional[List[str]] = None,
+        session_context: Optional[str] = None
     ) -> IntentAnalysisResult:
         available_repos = available_repos or [self.default_repo]
         raw_text_clean = raw_text.lstrip("\ufeff")
@@ -116,8 +117,12 @@ class IntentAnalyzer:
             logger.warning("Gemini Client not initialized (missing API key). Falling back to default READ intent.")
             return self._build_fallback_read_intent(combined_text, available_repos, "Missing API Key")
 
+        full_prompt_text = combined_text
+        if session_context and session_context.strip():
+            full_prompt_text = f"{session_context.strip()}\n\n[현재 신규 사용자 지시]\n{combined_text}"
+
         try:
-            return self._analyze_with_llm(combined_text, available_repos, command_hint)
+            return self._analyze_with_llm(full_prompt_text, available_repos, command_hint)
         except Exception as e:
             logger.error(f"Failed to analyze intent with LLM: {e}. Falling back to safe READ intent.")
             return self._build_fallback_read_intent(

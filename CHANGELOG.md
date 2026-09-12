@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.15] - 2026-09-13
+
+### Added & Enhanced
+- **Continuous Session Management & Context Compaction Architecture (`core/session_manager.py`)**:
+  - **Single Responsibility Architecture (SRP)**:
+    - `SessionStore`: SQLite WAL journaled external persistence (`.sessions/sessions.db`), zero daemon-crash memory loss, atomic transactions, 30-minute sliding TTL, automatic stale session archival.
+    - `SessionPruner`: Aggressive context pruning of large Git unified diffs (truncated to <=50 lines) and terminal stdout/stderr logs (traceback & exit status extraction), eliminating token bloating.
+    - `SessionCompactor`: Hybrid rolling compaction maintaining exact sliding window of $N=2$ recent turns and rolling summary for older turns (<1,500 tokens) with deterministic regex fallback and Flash-Lite background compaction.
+    - `SessionManager`: Deep module seam providing `get_or_resume_session`, `record_turn`, `build_replay_context`, and `check_git_drift` with seamless Git working tree drift detection.
+- **End-to-End Daemon & Pipeline Integration (`daemon_v2.py`, `core/intent_analyzer.py`, `core/executor_read.py`, `core/executor_write.py`)**:
+  - `daemon_v2.py`: Initialized `SessionManager` and integrated session retrieval using compound key (`channel:repo`), automatic session recording upon task completion, and session status card reporting in Google Tasks feedback notes (`[📌 세션: {repo} ({turn}턴 진행 중 / 30분 유효)]`).
+  - `IntentAnalyzer`: Added `session_context` injection into prompt for context-aware multi-turn intent extraction.
+  - `ReadExecutor` & `WriteExecutor`: Injected `session_context` into code analysis and synthesis prompts for continuity across sequential edits.
+- **Comprehensive TDD Test Suite Expansion (`tests/test_session_manager.py`, `tests/test_intent_analyzer.py`)**:
+  - Implemented 15 new unit tests covering TTL expiration, compound keys, sliding window compaction, pruner truncation, Git drift detection, and DB crash recovery.
+  - Full test suite expanded to 100 unit tests passing 100% with zero regressions.
+
 ## [2.1.14] - 2026-09-12
 
 ### Added & Enhanced

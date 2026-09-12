@@ -88,7 +88,8 @@ class WriteExecutor:
         original_text: str,
         instruction: str,
         target_path: str,
-        source_path: Optional[str] = None
+        source_path: Optional[str] = None,
+        session_context: Optional[str] = None
     ) -> str:
         """
         Uses Gemini (gemini-3.8-flash -> gemini-3.7-flash -> gemini-3.6-flash -> gemini-3.5-flash -> gemini-3.5-flash-lite)
@@ -98,6 +99,7 @@ class WriteExecutor:
             logger.warning("gemini_client not available for code synthesis. Using original text.")
             return original_text
 
+        session_block = f"\n[이전 연속 작업 세션 맥락]\n{session_context.strip()}\n" if session_context and session_context.strip() else ""
         prompt = f"""당신은 정밀한 소프트웨어 엔지니어입니다.
 사용자의 지시사항에 따라 소스 파일의 코드를 수정하거나 리팩토링하세요.
 
@@ -105,7 +107,7 @@ class WriteExecutor:
 1. 반드시 최종 파일의 전체 내용(코드/마크다운/문서 등)만 출력하세요.
 2. 앞뒤에 '```' 코드 블록 마크다운을 붙이지 말고 순수 파일 본문 텍스트만 출력하세요.
 3. 어떠한 부연 설명, 인사말, 작업 설명도 포함하지 마세요.
-
+{session_block}
 [파일 정보]
 - 원본 파일 경로: {source_path or target_path}
 - 대상 파일 경로: {target_path}
@@ -184,7 +186,8 @@ class WriteExecutor:
         self,
         repo_path: Path,
         intent: IntentAnalysisResult,
-        allow_protected_overwrite: Optional[bool] = None
+        allow_protected_overwrite: Optional[bool] = None,
+        session_context: Optional[str] = None
     ) -> Dict[str, str]:
         """
         Executes a WRITE task.
@@ -267,7 +270,8 @@ class WriteExecutor:
                 original_text=original_text,
                 instruction=intent.instruction,
                 target_path=target_path_str,
-                source_path=source_path_str
+                source_path=source_path_str,
+                session_context=session_context
             )
         else:
             new_content = original_text

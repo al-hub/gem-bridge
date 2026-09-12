@@ -28,6 +28,7 @@ from core.telemetry import TimeTagFormatter, PipelineProfiler
 from core.drive_storage import DriveStorageManager
 from core.janitor import StorageJanitor
 from core.google_tasks import GoogleTasksManager
+from core.session_manager import SessionManager, TurnType
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -163,6 +164,15 @@ class GemBridgeDaemonV2:
             user_gemini_client=self.user_gemini_client
         )
         self.exec_executor = ExecExecutor(drive_service=self.drive_service)
+
+        # Initialize session manager
+        sessions_dir = BASE_DIR / ".sessions"
+        self.session_manager = SessionManager(
+            storage_dir=sessions_dir,
+            ttl_seconds=1800.0,
+            sliding_window_n=2,
+            gemini_client=self.gemini_client or self.user_gemini_client
+        )
 
         self.processed_ids: Set[str] = set()
 
@@ -851,13 +861,31 @@ class GemBridgeDaemonV2:
                     fileId=doc_id
                 ).execute().decode("utf-8")
 
-            # 2. Analyze Intent (Enforcing Default=READ)
+            # 2. Pre-Analysis: Session retrieval
+            channel = "drive"
+            session = self.session_manager.get_or_resume_session(
+                channel=channel,
+                target_repo="gem-bridge",
+                incoming_input=raw_text
+            ) if self.session_manager else None
+            session_ctx = self.session_manager.build_replay_context(session) if session else None
+
+            # Analyze Intent (Enforcing Default=READ) with session_context
             available_repos = list(self.repo_manager.repo_mapping.keys())
             intent = self.intent_analyzer.analyze(
                 raw_text=raw_text,
                 title=doc_name,
-                available_repos=available_repos
+                available_repos=available_repos,
+                session_context=session_ctx
             )
+            if session and intent.target_repo != session.target_repo:
+                session = self.session_manager.get_or_resume_session(
+                    channel=channel,
+                    target_repo=intent.target_repo,
+                    incoming_input=raw_text
+                )
+                session_ctx = self.session_manager.build_replay_context(session)
+
             logger.info(
                 f"[Intent] Type: {intent.task_type.value} | TargetRepo: {intent.target_repo} | Summary: {intent.summary}"
             )
@@ -880,7 +908,15 @@ class GemBridgeDaemonV2:
             if intent.task_type == TaskType.READ:
                 rep_folder = self.storage_manager.get_destination_folder("reports") if self.storage_manager else parent_id
                 doc_title = self.storage_manager.format_mobile_title(TaskType.READ, intent.target_repo, intent.summary) if self.storage_manager else doc_name
-                result = self.read_executor.execute(repo_path, intent, original_title=doc_title, parent_id=rep_folder)
+                result = self.read_executor.execute(repo_path, intent, original_title=doc_title, parent_id=rep_folder, session_context=session_ctx)
+                if self.session_manager and session:
+                    self.session_manager.record_turn(
+                        session=session,
+                        task_type=TurnType.READ,
+                        user_input=raw_text,
+                        summary=intent.summary,
+                        execution_preview=result.get('preview', '')
+                    )
                 logger.info(f"[READ] Generated report doc: {result.get('doc_name')} ({result.get('doc_id')})")
                 self._update_status(
                     f"# 📄 [분석 보고서 완료] {doc_name}\n\n"
@@ -907,7 +943,17 @@ class GemBridgeDaemonV2:
                 )
 
             elif intent.task_type == TaskType.WRITE:
-                result = self.write_executor.execute(repo_path, intent)
+                result = self.write_executor.execute(repo_path, intent, session_context=session_ctx)
+                if self.session_manager and session:
+                    self.session_manager.record_turn(
+                        session=session,
+                        task_type=TurnType.WRITE,
+                        user_input=raw_text,
+                        summary=intent.summary,
+                        target_path=result.get('target_path'),
+                        commit_hash=result.get('commit_hash'),
+                        raw_diff=result.get('diff')
+                    )
                 logger.info(
                     f"[WRITE] Committed {result.get('commit_hash', '')[:7]}: {result.get('commit_message')} on {result.get('target_path')}"
                 )
@@ -961,6 +1007,15 @@ class GemBridgeDaemonV2:
                     log_folder = self.storage_manager.get_destination_folder("logs") if self.storage_manager else parent_id
                     doc_title = self.storage_manager.format_mobile_title(TaskType.EXEC, intent.target_repo, intent.summary or intent.exec_command) if self.storage_manager else doc_name
                     result = self.exec_executor.execute(repo_path, intent, original_title=doc_title, parent_id=log_folder)
+                    if self.session_manager and session:
+                        self.session_manager.record_turn(
+                            session=session,
+                            task_type=TurnType.EXEC,
+                            user_input=raw_text,
+                            summary=intent.summary or intent.exec_command,
+                            exit_code=result.get('exit_code'),
+                            raw_stdout=result.get('stdout', '') + "\n" + result.get('stderr', '')
+                        )
                     logger.info(f"[EXEC] Command completed with exit code {result.get('exit_code')}")
                     self._update_status(
                         f"# 💻 [명령 실행 완료] {doc_name}\n\n"
@@ -1122,13 +1177,31 @@ class GemBridgeDaemonV2:
                 now_str = TimeTagFormatter.format_kst()
 
                 try:
-                    # Analyze intent using IntentAnalyzer
+                    # Retrieve or resume session for tasks channel
+                    channel = "tasks"
+                    session = self.session_manager.get_or_resume_session(
+                        channel=channel,
+                        target_repo="gem-bridge",
+                        incoming_input=full_task_text
+                    ) if self.session_manager else None
+                    session_ctx = self.session_manager.build_replay_context(session) if session else None
+
+                    # Analyze intent using IntentAnalyzer with session_context
                     available_repos = list(self.repo_manager.repo_mapping.keys())
                     intent = self.intent_analyzer.analyze(
                         raw_text=full_task_text,
                         title=task_title,
-                        available_repos=available_repos
+                        available_repos=available_repos,
+                        session_context=session_ctx
                     )
+                    if session and intent.target_repo != session.target_repo:
+                        session = self.session_manager.get_or_resume_session(
+                            channel=channel,
+                            target_repo=intent.target_repo,
+                            incoming_input=full_task_text
+                        )
+                        session_ctx = self.session_manager.build_replay_context(session)
+
                     logger.info(
                         f"[{trace_id}][Tasks Intent] Type: {intent.task_type.value} | TargetRepo: {intent.target_repo} | Summary: {intent.summary}"
                     )
@@ -1147,7 +1220,15 @@ class GemBridgeDaemonV2:
                     if intent.task_type == TaskType.READ:
                         rep_folder = self.storage_manager.get_destination_folder("reports") if self.storage_manager else self.folder_id
                         doc_title = self.storage_manager.format_mobile_title(TaskType.READ, intent.target_repo, intent.summary) if self.storage_manager else task_title
-                        result = self.read_executor.execute(repo_path, intent, original_title=doc_title, parent_id=rep_folder)
+                        result = self.read_executor.execute(repo_path, intent, original_title=doc_title, parent_id=rep_folder, session_context=session_ctx)
+                        if self.session_manager and session:
+                            self.session_manager.record_turn(
+                                session=session,
+                                task_type=TurnType.READ,
+                                user_input=full_task_text,
+                                summary=intent.summary,
+                                execution_preview=result.get('preview', '')
+                            )
                         if self.mode == "hybrid":
                             output_str = (
                                 f"### 📄 [0-Tap Tasks 분석 보고서 요약]\n"
@@ -1169,9 +1250,12 @@ class GemBridgeDaemonV2:
                         if len(clean_preview) > 2500:
                             clean_preview = clean_preview[:2500] + "\n...(이하 생략)..."
 
+                        turn_num = len(session.turns) if session else 1
+                        session_badge = f"\n[📌 세션: {intent.target_repo} ({turn_num}턴 진행 중 / 30분 유효)]\n" if session else ""
+
                         feedback_notes = (
                             f"[분석 완료] {intent.target_repo}\n"
-                            f"주제: {intent.summary}\n\n"
+                            f"주제: {intent.summary}\n{session_badge}\n"
                             f"[보고서 요약]\n"
                             f"{clean_preview}\n\n"
                             f"[전체 보고서 안내]\n"
@@ -1188,7 +1272,17 @@ class GemBridgeDaemonV2:
                         )
 
                     elif intent.task_type == TaskType.WRITE:
-                        result = self.write_executor.execute(repo_path, intent)
+                        result = self.write_executor.execute(repo_path, intent, session_context=session_ctx)
+                        if self.session_manager and session:
+                            self.session_manager.record_turn(
+                                session=session,
+                                task_type=TurnType.WRITE,
+                                user_input=full_task_text,
+                                summary=intent.summary,
+                                target_path=result.get('target_path'),
+                                commit_hash=result.get('commit_hash'),
+                                raw_diff=result.get('diff')
+                            )
                         if self.mode == "hybrid" or self.drive_backup:
                             commit_folder = self.storage_manager.get_destination_folder("commits") if self.storage_manager else self.folder_id
                             doc_title = self.storage_manager.format_mobile_title(TaskType.WRITE, intent.target_repo, result.get('commit_message') or intent.summary) if self.storage_manager else task_title
@@ -1217,11 +1311,14 @@ class GemBridgeDaemonV2:
                         if len(diff_text) > 1500:
                             diff_text = diff_text[:1500] + "\n...(이하 diff 생략)..."
 
+                        turn_num = len(session.turns) if session else 1
+                        session_badge = f"\n[📌 세션: {intent.target_repo} ({turn_num}턴 진행 중 / 30분 유효)]\n" if session else ""
+
                         feedback_notes = (
                             f"[반영 완료] {intent.target_repo}\n"
                             f"변경 파일: {result.get('target_path')}\n"
                             f"커밋: {commit_hash_short} ({result.get('commit_message')})\n"
-                            f"상태: origin/main 푸시 완료\n\n"
+                            f"상태: origin/main 푸시 완료\n{session_badge}\n"
                             f"[변경 내용 (Diff)]\n"
                             f"{diff_text}"
                         )
@@ -1243,6 +1340,15 @@ class GemBridgeDaemonV2:
                             log_folder = None
                             doc_title = task_title
                         result = self.exec_executor.execute(repo_path, intent, original_title=doc_title, parent_id=log_folder)
+                        if self.session_manager and session:
+                            self.session_manager.record_turn(
+                                session=session,
+                                task_type=TurnType.EXEC,
+                                user_input=full_task_text,
+                                summary=intent.summary or intent.exec_command,
+                                exit_code=result.get('exit_code'),
+                                raw_stdout=result.get('stdout', '') + "\n" + result.get('stderr', '')
+                            )
                         if self.mode == "hybrid":
                             output_str = (
                                 f"### 💻 [0-Tap Tasks 명령 실행 완료]\n"
@@ -1266,10 +1372,12 @@ class GemBridgeDaemonV2:
                             console_output = console_output[:2000] + "\n...(이하 출력 생략)..."
 
                         is_exec_ok = (exit_code == 0)
+                        turn_num = len(session.turns) if session else 1
+                        session_badge = f"\n[📌 세션: {intent.target_repo} ({turn_num}턴 진행 중 / 30분 유효)]\n" if session else ""
                         feedback_notes = (
                             f"[{'실행 성공' if is_exec_ok else '실행 오류'}] {intent.target_repo}\n"
                             f"명령어: {intent.exec_command}\n"
-                            f"종료 코드: {exit_code}\n\n"
+                            f"종료 코드: {exit_code}\n{session_badge}\n"
                             f"[콘솔 출력]\n"
                             f"{console_output}"
                         )

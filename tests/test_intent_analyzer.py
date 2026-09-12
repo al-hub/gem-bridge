@@ -111,6 +111,30 @@ commit_message: feat: update landing page
             self.assertIsNotNone(result.instruction)
 
 
+    def test_analyze_with_session_context(self):
+        mock_response = MagicMock()
+        mock_response.text = json.dumps({
+            "task_type": "WRITE",
+            "target_repo": "gem-bridge",
+            "summary": "Fix login bug in auth/login.py",
+            "target_path": "auth/login.py",
+            "instruction": "Fix bug in login function"
+        })
+
+        with patch.object(self.analyzer.client.models, "generate_content", return_value=mock_response) as mock_gen:
+            result = self.analyzer.analyze(
+                raw_text="그 파일의 버그 수정해줘",
+                session_context="### 🔒 [불변 고정 메타데이터]\n- **대상 저장소**: `gem-bridge`\n- **최근 수정된 파일 목록**: `auth/login.py`\n"
+            )
+            self.assertEqual(result.task_type, TaskType.WRITE)
+            self.assertEqual(result.target_path, "auth/login.py")
+            called_kwargs = mock_gen.call_args[1] if mock_gen.call_args else {}
+            called_contents = called_kwargs.get("contents", "")
+            self.assertIn("불변 고정 메타데이터", called_contents)
+            self.assertIn("auth/login.py", called_contents)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
