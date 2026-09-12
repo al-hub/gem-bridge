@@ -230,6 +230,19 @@ class GemBridgeDaemonV2:
             logger.warning(f"Could not initialize CONSOLE document: {e}")
             return None
 
+    def _read_console_content(self) -> Optional[str]:
+        """Safely reads the current CONSOLE document plain text content."""
+        if not self.drive_service or not self.console_doc_id:
+            return None
+        try:
+            return self.drive_service.files().export_media(
+                fileId=self.console_doc_id,
+                mimeType="text/plain"
+            ).execute().decode("utf-8")
+        except Exception as e:
+            logger.warning(f"Failed to read CONSOLE doc content: {e}")
+            return None
+
     def _write_console_content(self, text: str):
         """Safely updates CONSOLE doc content and tracks modifiedTime."""
         if not self.drive_service or not self.console_doc_id:
@@ -530,6 +543,41 @@ class GemBridgeDaemonV2:
         except Exception as err:
             logger.error(f"Failed to write error state to CONSOLE doc: {err}")
 
+    def _sync_task_result_to_console(
+        self,
+        output_str: str,
+        action_status: Optional[str] = None,
+        action_message: Optional[str] = None,
+        history_entry: Optional[str] = None,
+        trace_id: Optional[str] = None,
+    ):
+        """Syncs completed task document result into CONSOLE doc so mobile Gem can read it immediately."""
+        if not self.drive_service or not self.console_doc_id:
+            return
+        try:
+            current_text = self._read_console_content()
+            history = ConsoleProtocolParser.extract_history(current_text) if current_text else []
+            if history_entry:
+                history.insert(0, history_entry)
+                history = history[:3]
+
+            tid = trace_id or f"tsk_{int(time.time())}"
+            updated_text = ConsoleDocFormatter.render(
+                status="ONLINE",
+                input_command=DEFAULT_PLACEHOLDER,
+                output_content=output_str,
+                history_items=history,
+                trace_id=tid,
+                duration_summary=f"완료: {TimeTagFormatter.format_kst()}",
+                action_status=action_status,
+                action_message=action_message,
+            )
+            self._write_console_content(updated_text)
+            self._last_processed_command_hash = ConsoleProtocolParser.compute_command_hash(DEFAULT_PLACEHOLDER)
+            logger.info("Successfully synced task document result to CONSOLE.")
+        except Exception as e:
+            logger.warning(f"Could not sync task document result to CONSOLE: {e}")
+
     def find_candidate_documents(self) -> List[dict]:
         """Queries Google Drive for pending task documents, strictly ignoring CONSOLE and STATUS."""
         if not self.drive_service:
@@ -634,6 +682,20 @@ class GemBridgeDaemonV2:
                     f"{result.get('preview', '')}\n\n"
                     f"*(전체 보고서는 구글 드라이브의 '{result.get('doc_name')}' 문서에 저장되었습니다.)*"
                 )
+                output_str = (
+                    f"### 📄 [분석 보고서 요약]\n"
+                    f"- 대상 저장소: `{intent.target_repo}`\n"
+                    f"- 분석 주제: **{intent.summary}**\n\n"
+                    f"{result.get('preview', '')}\n\n"
+                    f"*(전체 보고서는 Google Drive의 `{result.get('doc_name')}` 문서에 저장되었습니다.)*"
+                )
+                self._sync_task_result_to_console(
+                    output_str=output_str,
+                    action_status="READ_SUCCESS",
+                    action_message=f"[{intent.target_repo}] {intent.summary} 분석 보고서 생성 완료",
+                    history_entry=f"- [{time.strftime('%m-%d %H:%M')}] [📄 분석] {intent.summary} (#{doc_id[-4:] if doc_id else 'task'})",
+                    trace_id=f"tsk_{doc_id[-6:] if doc_id else int(time.time())}",
+                )
 
             elif intent.task_type == TaskType.WRITE:
                 result = self.write_executor.execute(repo_path, intent)
@@ -652,6 +714,22 @@ class GemBridgeDaemonV2:
                     f"### 변경 내용 (Diff)\n"
                     f"```diff\n{result.get('diff') or '(신규 파일)'}\n```\n"
                 )
+                output_str = (
+                    f"### 🟢 [작업 완료 및 Git 반영]\n"
+                    f"- 대상 저장소: `{intent.target_repo}`\n"
+                    f"- 변경 파일: `{result.get('target_path')}`\n"
+                    f"- 커밋 메시지: `{result.get('commit_message')}`\n"
+                    f"- 커밋 해시: `{result.get('commit_hash')}` (origin/main 푸시 완료)\n\n"
+                    f"#### 주요 변경 내용 (Diff)\n"
+                    f"```diff\n{result.get('diff') or '(신규 파일)'}\n```"
+                )
+                self._sync_task_result_to_console(
+                    output_str=output_str,
+                    action_status="COMMIT_SUCCESS",
+                    action_message=f"커밋 `{result.get('commit_hash', '')[:7]}` 완료 ({intent.target_repo})",
+                    history_entry=f"- [{time.strftime('%m-%d %H:%M')}] [🟢 커밋] {result.get('commit_message')} (#{doc_id[-4:] if doc_id else 'task'})",
+                    trace_id=f"tsk_{doc_id[-6:] if doc_id else int(time.time())}",
+                )
 
             elif intent.task_type == TaskType.EXEC:
                 result = self.exec_executor.execute(repo_path, intent, original_title=doc_name, parent_id=parent_id)
@@ -664,6 +742,21 @@ class GemBridgeDaemonV2:
                     f"### 실행 콘솔 출력\n"
                     f"```text\n{(result.get('stdout', '') + chr(10) + result.get('stderr', '')).strip() or '(출력 없음)'}\n```\n"
                 )
+                output_str = (
+                    f"### 💻 [명령 실행 완료]\n"
+                    f"- 대상 저장소: `{intent.target_repo}`\n"
+                    f"- 명령어: `{intent.exec_command}`\n"
+                    f"- 종료 코드: `{result.get('exit_code')}`\n\n"
+                    f"#### 실행 콘솔 출력\n"
+                    f"```text\n{(result.get('stdout', '') + chr(10) + result.get('stderr', '')).strip() or '(출력 없음)'}\n```"
+                )
+                self._sync_task_result_to_console(
+                    output_str=output_str,
+                    action_status="READ_SUCCESS",
+                    action_message=f"명령어 `{intent.exec_command}` 실행 완료 (종료 코드: {result.get('exit_code')})",
+                    history_entry=f"- [{time.strftime('%m-%d %H:%M')}] [💻 실행] {intent.exec_command} (#{doc_id[-4:] if doc_id else 'task'})",
+                    trace_id=f"tsk_{doc_id[-6:] if doc_id else int(time.time())}",
+                )
 
             # 5. Move original document to trash
             self._trash_document(doc_id, doc_name)
@@ -672,6 +765,7 @@ class GemBridgeDaemonV2:
             logger.error(f"[Dispatcher Error] Task '{doc_name}' failed: {e}")
             logger.error(traceback.format_exc())
             self._handle_task_error(doc_id, doc_name, e, parent_id=parent_id)
+            self._handle_console_error(e, trace_id=f"err_{doc_id[-6:] if doc_id else int(time.time())}")
             self._trash_document(doc_id, doc_name, error=True)
 
     def _trash_document(self, doc_id: str, doc_name: str, error: bool = False):

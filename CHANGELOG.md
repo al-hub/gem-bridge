@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.4] - 2026-09-12
+
+### Added
+- **Bidirectional Task Completion Sync to CONSOLE (`daemon_v2.py`)**:
+  - Added `_sync_task_result_to_console` and `_read_console_content` to `DaemonV2`.
+  - All task types (`READ`, `WRITE`, `EXEC`) submitted via Google Docs task documents (`!작업`, `!분석`, `!실행`) now immediately synchronize their execution status, action banners (`COMMIT_SUCCESS`, `READ_SUCCESS`), summaries, and diffs to the `CONSOLE` Google Doc.
+  - Ensures mobile Gemini Gem always has instant access to the latest task results when the user asks "결과 알려줘", completely eliminating stale console outputs.
+
 ## [2.1.3] - 2026-09-12
 
 ### Added
