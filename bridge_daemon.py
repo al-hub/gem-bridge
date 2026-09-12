@@ -41,14 +41,28 @@ def execute_git_task(repo_path: Path, target_path: str, content: str, commit_mes
     subprocess.run(["git", "-C", str(repo_path), "push", "origin", "main"], check=True)
     log_message(f"Push successful to {repo_path.name}")
 
-def parse_json_payload(raw_text: str) -> dict:
-    text = raw_text.strip()
+def parse_json_payload(raw_data) -> dict:
+    # 1. 이미 dict 형태로 넘어온 경우 (.gdoc 메타데이터 등)
+    if isinstance(raw_data, dict):
+        if "doc_id" in raw_data:
+            doc_id = raw_data.get("doc_id")
+            export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+            res = subprocess.run(["curl.exe", "-sL", export_url], capture_output=True, text=True, errors="ignore")
+            if res.stdout.strip():
+                raw_data = res.stdout.strip()
+            else:
+                return raw_data
+        else:
+            return raw_data
+
+    # 2. 문자열 형태로 넘어온 경우
+    text = str(raw_data).strip()
     if "```json" in text:
         text = text.split("```json")[1].split("```")[0].strip()
     elif "```" in text:
         text = text.split("```")[1].split("```")[0].strip()
 
-    # Google Docs 메타데이터 형식인 경우 doc_id 추출 및 텍스트 취득
+    # Google Docs 메타데이터 문자열인 경우 doc_id 추출 및 텍스트 취득
     if '"doc_id"' in text and '"url"' in text:
         try:
             meta = json.loads(text)
@@ -69,7 +83,6 @@ def parse_json_payload(raw_text: str) -> dict:
     return json.loads(text)
 
 def check_and_process_windows_drive():
-    # PowerShell을 통해 Windows 파일시스템 레벨에서 안전하게 검색 및 읽기 수행
     ps_script = """
     $targets = @("G:\\내 드라이브\\GeminiBridge\\*.json", "G:\\내 드라이브\\GeminiBridge\\*.gdoc", "G:\\내 드라이브\\task*.gdoc", "G:\\내 드라이브\\task*.json")
     $files = Get-ChildItem -Path $targets -ErrorAction SilentlyContinue
@@ -111,7 +124,6 @@ def check_and_process_windows_drive():
 
             execute_git_task(REPO_MAP[repo_key], target_path, file_content, commit_message)
 
-            # 완료 후 Windows 파일 삭제
             del_cmd = ["powershell.exe", "-NoProfile", "-Command", f"Remove-Item -LiteralPath '{full_path}' -Force"]
             subprocess.run(del_cmd, capture_output=True)
             log_message(f"Task finished and removed from Drive: {file_name}")
@@ -120,7 +132,7 @@ def check_and_process_windows_drive():
             log_message(f"[ERROR] Failed processing {file_name}: {e}")
 
 def main():
-    log_message("=== Gemini Bridge Daemon (v4: Pure Windows Host Engine) Started ===")
+    log_message("=== Gemini Bridge Daemon (v5: Dict-Safe Type Parsing) Started ===")
     while True:
         try:
             check_and_process_windows_drive()
