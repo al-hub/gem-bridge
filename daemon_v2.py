@@ -110,9 +110,30 @@ class GemBridgeDaemonV2:
             self.drive_service = None
 
         # Initialize Gemini Clients:
-        # 1) User OAuth client (Tier-1 VIP for gemini-3.8-flash)
+        # 1) User Pro / OAuth client (Tier-1 VIP for gemini-3.8-flash)
         self.user_gemini_client = None
-        if TOKEN_PATH.exists():
+        user_pro_key = os.environ.get("GEMINI_API_KEY")
+        if not user_pro_key:
+            bashrc_path = Path.home() / ".bashrc"
+            if bashrc_path.exists():
+                try:
+                    for line in bashrc_path.read_text(encoding="utf-8").splitlines():
+                        line = line.strip()
+                        if line.startswith("export GEMINI_API_KEY="):
+                            val = line.split("=", 1)[1].strip().strip("\"'")
+                            if val:
+                                user_pro_key = val
+                                break
+                except Exception:
+                    pass
+
+        if user_pro_key:
+            try:
+                self.user_gemini_client = genai.Client(api_key=user_pro_key)
+                logger.info("User Pro Account Gemini Client successfully initialized (Tier-1 Primary for gemini-3.8-flash).")
+            except Exception as e:
+                logger.warning(f"Failed to initialize User Pro Gemini Client with pro key: {e}")
+        elif TOKEN_PATH.exists():
             try:
                 with open(TOKEN_PATH, "r", encoding="utf-8") as f:
                     t_data = json.load(f)
