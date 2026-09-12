@@ -60,7 +60,7 @@ class GemBridgeDaemonV2:
     dynamically prepares repositories, and dispatches to appropriate executors.
     """
 
-    SYSTEM_DOC_PREFIXES = ["[보고서]", "[완료]", "[오류]", "[실행결과]"]
+    SYSTEM_DOC_PREFIXES = ["[보고서]", "[완료]", "[오류]", "[실행결과]", "STATUS"]
     TRIGGER_KEYWORDS = ["!", "깃", "task", "작업", "분석", "실행", "gem-bridge", "보고서"]
 
     def __init__(self, config: Optional[dict] = None):
@@ -96,6 +96,53 @@ class GemBridgeDaemonV2:
         self.exec_executor = ExecExecutor(drive_service=self.drive_service)
 
         self.processed_ids: Set[str] = set()
+        self.status_doc_id: Optional[str] = self._init_status_doc()
+
+    def _init_status_doc(self) -> Optional[str]:
+        if not self.drive_service:
+            return None
+        try:
+            # Find GeminiBridge folder
+            folder_res = self.drive_service.files().list(
+                q="mimeType = 'application/vnd.google-apps.folder' and name = 'GeminiBridge' and trashed = false",
+                fields="files(id, name)"
+            ).execute()
+            folders = folder_res.get("files", [])
+            folder_id = folders[0]["id"] if folders else None
+
+            # Find existing STATUS doc
+            q = "name = 'STATUS' and trashed = false"
+            if folder_id:
+                q += f" and '{folder_id}' in parents"
+            res = self.drive_service.files().list(q=q, fields="files(id, name)").execute()
+            files = res.get("files", [])
+            if files:
+                return files[0]["id"]
+
+            # Create if not exists
+            initial_text = f"# 🟢 gem-bridge 시스템 가동 중\n- 상태: 대기 중\n- 시각: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+            media = MediaInMemoryUpload(initial_text.encode("utf-8"), mimetype="text/plain")
+            body = {"name": "STATUS", "mimeType": "application/vnd.google-apps.document"}
+            if folder_id:
+                body["parents"] = [folder_id]
+            created = self.drive_service.files().create(body=body, media_body=media, fields="id").execute()
+            return created.get("id")
+        except Exception as e:
+            logger.warning(f"Could not initialize STATUS document: {e}")
+            return None
+
+    def _update_status(self, text: str):
+        if not self.drive_service or not self.status_doc_id:
+            return
+        try:
+            media = MediaInMemoryUpload(text.encode("utf-8"), mimetype="text/plain")
+            self.drive_service.files().update(
+                fileId=self.status_doc_id,
+                media_body=media
+            ).execute()
+            logger.info("Updated GeminiBridge/STATUS document.")
+        except Exception as e:
+            logger.warning(f"Failed to update STATUS document: {e}")
 
     def find_candidate_documents(self) -> List[dict]:
         """Queries Google Drive for pending task documents."""
@@ -169,6 +216,16 @@ class GemBridgeDaemonV2:
                 f"[Intent] Type: {intent.task_type.value} | TargetRepo: {intent.target_repo} | Summary: {intent.summary}"
             )
 
+            now_str = time.strftime('%Y-%m-%d %H:%M:%S')
+            self._update_status(
+                f"# ⏳ [처리 중] {doc_name}\n\n"
+                f"- 감지 시각: {now_str} KST\n"
+                f"- 대상 저장소: {intent.target_repo}\n"
+                f"- 작업 유형: {intent.task_type.value}\n"
+                f"- 요약: {intent.summary}\n\n"
+                f"현재 WSL 환경에서 작업을 수행하고 있습니다..."
+            )
+
             # 3. Dynamic Repository Preparation
             repo_path = self.repo_manager.prepare_repo(intent.target_repo)
             logger.info(f"[Repo] Prepared repository at: {repo_path}")
@@ -177,6 +234,15 @@ class GemBridgeDaemonV2:
             if intent.task_type == TaskType.READ:
                 result = self.read_executor.execute(repo_path, intent, original_title=doc_name, parent_id=parent_id)
                 logger.info(f"[READ] Generated report doc: {result.get('doc_name')} ({result.get('doc_id')})")
+                self._update_status(
+                    f"# 📄 [분석 보고서 완료] {doc_name}\n\n"
+                    f"- 완료 시각: {time.strftime('%Y-%m-%d %H:%M:%S')} KST\n"
+                    f"- 대상 저장소: {intent.target_repo}\n"
+                    f"- 분석 주제: {intent.summary}\n\n"
+                    f"## 분석 결과 요약\n"
+                    f"{result.get('preview', '')}\n\n"
+                    f"*(전체 보고서는 구글 드라이브의 '{result.get('doc_name')}' 문서에 저장되었습니다.)*"
+                )
 
             elif intent.task_type == TaskType.WRITE:
                 result = self.write_executor.execute(repo_path, intent)
@@ -185,10 +251,28 @@ class GemBridgeDaemonV2:
                 )
                 # Upload brief completion confirmation to Google Drive
                 self._create_completion_doc(doc_name, result, parent_id=parent_id)
+                self._update_status(
+                    f"# ✅ [작업 완료] {doc_name}\n\n"
+                    f"- 완료 시각: {time.strftime('%Y-%m-%d %H:%M:%S')} KST\n"
+                    f"- 대상 저장소: {intent.target_repo}\n"
+                    f"- 변경 파일: `{result.get('target_path')}`\n"
+                    f"- 커밋 메시지: `{result.get('commit_message')}`\n"
+                    f"- 커밋 해시: `{result.get('commit_hash')}` (GitHub origin/main 푸시 완료)\n\n"
+                    f"### 변경 내용 (Diff)\n"
+                    f"```diff\n{result.get('diff') or '(신규 파일)'}\n```\n"
+                )
 
             elif intent.task_type == TaskType.EXEC:
                 result = self.exec_executor.execute(repo_path, intent, original_title=doc_name, parent_id=parent_id)
                 logger.info(f"[EXEC] Command completed with exit code {result.get('exit_code')}")
+                self._update_status(
+                    f"# 💻 [명령 실행 완료] {doc_name}\n\n"
+                    f"- 완료 시각: {time.strftime('%Y-%m-%d %H:%M:%S')} KST\n"
+                    f"- 명령어: `{intent.exec_command}`\n"
+                    f"- 종료 코드: {result.get('exit_code')}\n\n"
+                    f"### 실행 콘솔 출력\n"
+                    f"```\n{result.get('stdout', '')[:1000]}\n```\n"
+                )
 
             else:
                 raise ValueError(f"Unknown TaskType encountered: {intent.task_type}")
@@ -201,6 +285,13 @@ class GemBridgeDaemonV2:
             logger.error(f"[Dispatcher Error] Task '{doc_name}' failed: {task_error}")
             logger.error(traceback.format_exc())
             self._handle_task_error(doc_id, doc_name, task_error, parent_id=parent_id)
+            self._update_status(
+                f"# ❌ [작업 실패] {doc_name}\n\n"
+                f"- 에러 발생 시각: {time.strftime('%Y-%m-%d %H:%M:%S')} KST\n"
+                f"- 발생 에러: `{type(task_error).__name__}: {str(task_error)}`\n\n"
+                f"### 에러 내용\n"
+                f"```\n{str(task_error)}\n```\n"
+            )
             try:
                 self.drive_service.files().update(fileId=doc_id, body={"trashed": True}).execute()
                 logger.info(f"[Dispatcher] Errored task document moved to trash: '{doc_name}'")
