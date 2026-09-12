@@ -6,8 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 > ⚠️ **Versioning Policy**:
-> - **Major Version Lock**: Major version (`v2.x.x` -> `v3.0.0`) is strictly frozen and will **NEVER** be updated without explicit user permission.
-> - **Permitted Increments**: Only Minor / Patch updates (`v2.x.y`) are performed.
+> - **Locked to v2.1.x**: Major(1st) and Minor(2nd) digits are strictly frozen without explicit user permission.
+> - **Permitted Increments**: Only the 3rd position `z` (`v2.1.z`) is updated (`v2.1.1`, `v2.1.2`, ...).
 
 ---
 
