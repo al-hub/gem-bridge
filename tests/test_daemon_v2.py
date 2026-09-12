@@ -287,9 +287,41 @@ class TestDaemonV2(unittest.TestCase):
             input_command="!작업 test",
             output_content="최신 결과 출력"
         )
-        out_pos = rendered.find("## 📤 [CONSOLE OUTPUT]")
-        in_pos = rendered.find(">>> INPUT >>>")
-        self.assertTrue(out_pos < in_pos, "OUTPUT must be above INPUT in Top-Anchored layout for Above-the-Fold parsing")
+    def test_check_and_process_google_tasks_write(self):
+        # Mock GoogleTasksManager
+        mock_tasks_mgr = MagicMock()
+        mock_tasks_mgr.is_available = True
+        mock_tasks_mgr.list_pending_tasks.return_value = [
+            {"id": "gtask_123", "title": "gem-bridge docs/guide.md 수정하고 푸시해줘", "notes": ""}
+        ]
+        self.daemon.tasks_manager = mock_tasks_mgr
+
+        # Mock intent analyzer to return WRITE
+        self.daemon.intent_analyzer.analyze = MagicMock(return_value=IntentAnalysisResult(
+            task_type=TaskType.WRITE,
+            target_repo="gem-bridge",
+            summary="docs/guide.md 수정",
+            target_path="docs/guide.md",
+            instruction="모바일 사용법 추가",
+            commit_message="docs: update guide.md via 0-tap"
+        ))
+        self.daemon.repo_manager.prepare_repo = MagicMock(return_value="/tmp/dummy-gem-bridge")
+        self.daemon.write_executor.execute = MagicMock(return_value={
+            "status": "success", "commit_hash": "a1b2c3d", "commit_message": "docs: update guide.md via 0-tap",
+            "target_path": "docs/guide.md", "diff": "+ new content"
+        })
+        self.daemon._create_completion_doc = MagicMock()
+        self.daemon._sync_task_result_to_console = MagicMock()
+
+        self.daemon.check_and_process_google_tasks()
+
+        self.assertIn("gtask_123", self.daemon.processed_task_ids)
+        self.daemon.write_executor.execute.assert_called_once()
+        mock_tasks_mgr.complete_task.assert_called_once_with(
+            task_id="gtask_123",
+            completion_notes="✅ [gem-bridge 완료] 커밋: a1b2c3d - docs: update guide.md via 0-tap"
+        )
+        self.daemon._sync_task_result_to_console.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ from core.console_protocol import (
 from core.telemetry import TimeTagFormatter, PipelineProfiler
 from core.drive_storage import DriveStorageManager
 from core.janitor import StorageJanitor
+from core.google_tasks import GoogleTasksManager
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -61,6 +62,19 @@ def get_drive_service(token_path: Path = TOKEN_PATH):
         creds_data = json.load(f)
     creds = Credentials.from_authorized_user_info(creds_data)
     return build("drive", "v3", credentials=creds)
+
+
+def get_tasks_manager(token_path: Path = TOKEN_PATH) -> Optional[GoogleTasksManager]:
+    if not token_path.exists():
+        return None
+    try:
+        with open(token_path, "r", encoding="utf-8") as f:
+            creds_data = json.load(f)
+        creds = Credentials.from_authorized_user_info(creds_data)
+        return GoogleTasksManager(credentials=creds)
+    except Exception as e:
+        logger.warning(f"Could not initialize Google Tasks manager: {e}")
+        return None
 
 
 class GemBridgeDaemonV2:
@@ -128,6 +142,10 @@ class GemBridgeDaemonV2:
 
         if self.drive_service:
             self.console_doc_id = self._init_console_doc()
+
+        # Google Tasks Manager (0-Tap Gemini Mobile Tasks)
+        self.tasks_manager: Optional[GoogleTasksManager] = get_tasks_manager()
+        self.processed_task_ids: Set[str] = set()
 
         # Register graceful shutdown signals (SIGTERM, SIGINT)
         try:
@@ -1037,6 +1055,129 @@ class GemBridgeDaemonV2:
         except Exception as upload_err:
             logger.error(f"Failed to create error document on Drive: {upload_err}")
 
+    def check_and_process_google_tasks(self):
+        """Polls Google Tasks for 0-Tap mobile tasks registered via Gemini Mobile (@Google Tasks)."""
+        if not self.tasks_manager or not self.tasks_manager.is_available:
+            return
+
+        try:
+            pending_tasks = self.tasks_manager.list_pending_tasks(tasklist_id="@default")
+            if not pending_tasks:
+                return
+
+            for task in pending_tasks:
+                task_id = task.get("id")
+                if not task_id or task_id in self.processed_task_ids:
+                    continue
+
+                task_title = (task.get("title") or "").strip()
+                task_notes = (task.get("notes") or "").strip()
+                full_task_text = f"{task_title}\n{task_notes}".strip()
+
+                logger.info(f"=== [Google Tasks 0-Tap] Detected task: '{task_title}' (ID: {task_id}) ===")
+                self.processed_task_ids.add(task_id)
+                self._last_activity_time = time.time()
+
+                trace_id = TimeTagFormatter.generate_trace_id()
+                now_str = TimeTagFormatter.format_kst()
+
+                # Analyze intent using IntentAnalyzer
+                available_repos = list(self.repo_manager.repo_mapping.keys())
+                intent = self.intent_analyzer.analyze(
+                    raw_text=full_task_text,
+                    title=task_title,
+                    available_repos=available_repos
+                )
+                logger.info(
+                    f"[{trace_id}][Tasks Intent] Type: {intent.task_type.value} | TargetRepo: {intent.target_repo} | Summary: {intent.summary}"
+                )
+
+                self._update_status(
+                    f"# ⏳ [0-Tap Tasks 처리 중] {task_title}\n\n"
+                    f"- 시각: {now_str}\n"
+                    f"- 대상: {intent.target_repo}\n"
+                    f"- 작업 유형: {intent.task_type.value}\n"
+                    f"- 요약: {intent.summary}"
+                )
+
+                repo_path = self.repo_manager.prepare_repo(intent.target_repo)
+
+                if intent.task_type == TaskType.READ:
+                    rep_folder = self.storage_manager.get_destination_folder("reports") if self.storage_manager else self.folder_id
+                    doc_title = self.storage_manager.format_mobile_title(TaskType.READ, intent.target_repo, intent.summary) if self.storage_manager else task_title
+                    result = self.read_executor.execute(repo_path, intent, original_title=doc_title, parent_id=rep_folder)
+                    output_str = (
+                        f"### 📄 [0-Tap Tasks 분석 보고서 요약]\n"
+                        f"- 대상 저장소: `{intent.target_repo}`\n"
+                        f"- 분석 주제: **{intent.summary}**\n\n"
+                        f"{result.get('preview', '')}\n\n"
+                        f"*(전체 보고서는 Google Drive의 `{result.get('doc_name')}` 문서에 저장되었습니다.)*"
+                    )
+                    self._sync_task_result_to_console(
+                        output_str=output_str,
+                        action_status="READ_SUCCESS",
+                        action_message=f"[{intent.target_repo}] {intent.summary} 분석 완료",
+                        history_entry=f"- [{now_str[5:16]}] [📄 Tasks분석] {intent.summary} (#{trace_id[-4:]})",
+                        trace_id=trace_id,
+                    )
+                    self.tasks_manager.complete_task(
+                        task_id=task_id,
+                        completion_notes=f"✅ [gem-bridge 완료] 분석 보고서 생성됨 ({result.get('doc_name')})"
+                    )
+
+                elif intent.task_type == TaskType.WRITE:
+                    result = self.write_executor.execute(repo_path, intent)
+                    commit_folder = self.storage_manager.get_destination_folder("commits") if self.storage_manager else self.folder_id
+                    doc_title = self.storage_manager.format_mobile_title(TaskType.WRITE, intent.target_repo, result.get('commit_message') or intent.summary) if self.storage_manager else task_title
+                    self._create_completion_doc(doc_title, result, parent_id=commit_folder)
+                    output_str = (
+                        f"### 🟢 [0-Tap Tasks Git 반영 완료]\n"
+                        f"- 대상 저장소: `{intent.target_repo}`\n"
+                        f"- 변경 파일: `{result.get('target_path')}`\n"
+                        f"- 커밋 메시지: `{result.get('commit_message')}`\n"
+                        f"- 커밋 해시: `{result.get('commit_hash')}` (origin/main 푸시 완료)\n\n"
+                        f"#### 주요 변경 내용 (Diff)\n"
+                        f"```diff\n{result.get('diff') or '(신규 파일)'}\n```"
+                    )
+                    self._sync_task_result_to_console(
+                        output_str=output_str,
+                        action_status="COMMIT_SUCCESS",
+                        action_message=f"커밋 `{result.get('commit_hash', '')[:7]}` 완료 ({intent.target_repo})",
+                        history_entry=f"- [{now_str[5:16]}] [🟢 Tasks커밋] {result.get('commit_message')} (#{trace_id[-4:]})",
+                        trace_id=trace_id,
+                    )
+                    self.tasks_manager.complete_task(
+                        task_id=task_id,
+                        completion_notes=f"✅ [gem-bridge 완료] 커밋: {result.get('commit_hash', '')[:7]} - {result.get('commit_message')}"
+                    )
+
+                elif intent.task_type == TaskType.EXEC:
+                    log_folder = self.storage_manager.get_destination_folder("logs") if self.storage_manager else self.folder_id
+                    doc_title = self.storage_manager.format_mobile_title(TaskType.EXEC, intent.target_repo, intent.summary or intent.exec_command) if self.storage_manager else task_title
+                    result = self.exec_executor.execute(repo_path, intent, original_title=doc_title, parent_id=log_folder)
+                    output_str = (
+                        f"### 💻 [0-Tap Tasks 명령 실행 완료]\n"
+                        f"- 대상 저장소: `{intent.target_repo}`\n"
+                        f"- 명령어: `{intent.exec_command}`\n"
+                        f"- 종료 코드: `{result.get('exit_code')}`\n\n"
+                        f"#### 실행 콘솔 출력\n"
+                        f"```text\n{(result.get('stdout', '') + chr(10) + result.get('stderr', '')).strip() or '(출력 없음)'}\n```"
+                    )
+                    self._sync_task_result_to_console(
+                        output_str=output_str,
+                        action_status="EXEC_SUCCESS" if result.get('exit_code') == 0 else "EXEC_ERROR",
+                        action_message=f"명령어 `{intent.exec_command}` 실행 완료 (code: {result.get('exit_code')})",
+                        history_entry=f"- [{now_str[5:16]}] [💻 Tasks실행] {intent.summary or intent.exec_command} (#{trace_id[-4:]})",
+                        trace_id=trace_id,
+                    )
+                    self.tasks_manager.complete_task(
+                        task_id=task_id,
+                        completion_notes=f"✅ [gem-bridge 완료] 종료 코드: {result.get('exit_code')}"
+                    )
+
+        except Exception as e:
+            logger.error(f"Error checking/processing Google Tasks: {e}")
+
     def run_poll_cycle(self):
         """Executes a single polling and processing cycle."""
         # 1. Check and process single bi-directional CONSOLE document
@@ -1056,7 +1197,10 @@ class GemBridgeDaemonV2:
             except Exception as e:
                 logger.warning(f"[Janitor] Scheduled cleanup error: {e}")
 
-        # 4. Check legacy or ephemeral task documents
+        # 4. Check Google Tasks for 0-Tap mobile tasks
+        self.check_and_process_google_tasks()
+
+        # 5. Check legacy or ephemeral task documents
         candidates = self.find_candidate_documents()
         if candidates:
             self._last_activity_time = time.time()

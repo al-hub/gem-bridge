@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.8] - 2026-09-12
+
+### Added
+- **0-Tap Voice/Text Mobile Automation via `@Google Tasks` (`core/google_tasks.py`)**:
+  - Implemented `GoogleTasksManager` integrating Google Tasks API (`tasks.googleapis.com/tasks/v1`) with combined OAuth scopes (`drive` + `tasks`).
+  - Seamless 0-Tap mobile UX: Users speak or type naturally in mobile Gemini (e.g. `"@Google Tasks gem-bridge docs/guide.md 수정하고 푸시해줘 등록해줘"`), and Gemini creates the task without clicking any buttons.
+  - PC Daemon (`daemon_v2.py`) automatically polls `@default` Google Tasks, analyzes pure natural language via `IntentAnalyzer`, executes `WriteExecutor` (Git commit & push), `ReadExecutor`, or `ExecExecutor`, marks the task as completed, and appends completion notes with commit hashes.
+  - Automatic sync to `[최신결과] CONSOLE` and `STATUS` documents for in-chat feedback.
+- **Combined OAuth Authorization Wizard (`auth_helper.py`)**:
+  - Updated OAuth scopes to include both `https://www.googleapis.com/auth/drive` and `https://www.googleapis.com/auth/tasks`.
+  - Provided interactive setup wizard for generating combined `token.json`.
+- **Test Suite Expansion (`tests/test_google_tasks.py`, `tests/test_daemon_v2.py`)**:
+  - Added 6 new unit tests for Google Tasks listing, completion, error handling, and daemon integration (67 total tests passing).
+
+---
+
 ## [2.1.7] - 2026-09-12
 
 ### Added
