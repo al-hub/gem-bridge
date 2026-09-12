@@ -9,6 +9,7 @@ from core.repo_manager import RepoManager, RepoError
 from core.executor_read import ReadExecutor
 from core.executor_write import WriteExecutor, ProtectedFileError
 from core.executor_exec import ExecExecutor
+from core.console_protocol import ConsoleProtocolParser, ConsoleDocFormatter
 
 __all__ = [
     "__version__",
@@ -22,4 +23,6 @@ __all__ = [
     "WriteExecutor",
     "ProtectedFileError",
     "ExecExecutor",
+    "ConsoleProtocolParser",
+    "ConsoleDocFormatter",
 ]

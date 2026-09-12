@@ -11,6 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.2] - 2026-09-12
+
+### Added
+- **Single Bi-Directional Mobile `CONSOLE` Document (`GeminiBridge/CONSOLE`)**:
+  - Direct interaction hub optimized for smartphone Google Docs & Google Gemini mobile.
+  - Top-anchored input area (`>>> INPUT >>> ... <<< END <<<`) immune to virtual keyboard occlusion.
+  - Fault-tolerant mobile preprocessor handling typographic quotes, em-dashes, BOMs, and zero-width spaces.
+  - Automatic Rolling History (sliding window N=3) preventing document bloat.
+- **3-Layer Anti-Echo / Self-Loop Defense**:
+  - Layer 1: SHA-256 caching of daemon-written document text.
+  - Layer 2: SHA-256 hash tracking of normalized user commands.
+  - Layer 3: Google Drive `modifiedTime` metadata pre-filtering.
+- **PC Offline Detection & Heartbeat**:
+  - Graceful shutdown signal traps (`SIGTERM`, `SIGINT`) instantly setting `[🔴 OFFLINE]` badge.
+  - Heartbeat timestamp tracking for ungraceful power outage/sleep detection.
+  - Unattended auto-queueing: commands typed while PC is off execute automatically upon PC boot.
+- **100% Backward Compatibility**:
+  - Preserved ephemeral task document ingestion and `STATUS` doc tracking.
+
+---
+
 ## [2.0.1] - 2026-09-12
 
 ### Added

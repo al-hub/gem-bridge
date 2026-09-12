@@ -5,5 +5,5 @@ Policy: Major version (v2) is locked until explicit user approval.
 Only minor / patch versions are updated.
 """
 
-__version__ = "2.0.1"
-__version_info__ = (2, 0, 1)
+__version__ = "2.0.2"
+__version_info__ = (2, 0, 2)
