@@ -52,11 +52,13 @@
 
 | 문서명 | 주요 내용 | 대상 독자 |
 | :--- | :--- | :--- |
-| **[`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md)** | • Google Cloud OAuth (`credentials.json`, `token.json`) 설정<br>• Gemini API Key 발급 및 `config.json` 매핑<br>• SSH 및 Git Push 인증 구성 | **처음 시작하는 사용자** |
-| **[`docs/USAGE_GUIDE.md`](docs/USAGE_GUIDE.md)** | • 모바일 구글 제미나이 앱 및 독스 활용법<br>• 커맨드 치트시트 (`!분석`, `!작업`, `!실행`)<br>• 프롬프트 작성 팁 및 결과 확인법 | **일상 사용자 / 모바일 작업자** |
-| **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** | • Dispatcher-Executor 패턴 심층 설계<br>• Seam 원칙 및 모듈 인터페이스 명세<br>• 가드레일 및 오류 격리 메커니즘 | **개발자 / 코드 기여자** |
-| **[`docs/AUTO_STARTUP_GUIDE.md`](docs/AUTO_STARTUP_GUIDE.md)** | • Windows-WSL2 2단계 무인 자동 실행 원리<br>• VBS 스크립트 및 `systemd` 서비스 구성<br>• 무중단 상시 구동 트러블슈팅 | **시스템 관리자 / 운영자** |
-| **[`CHANGELOG.md`](CHANGELOG.md)** | • 릴리스 히스토리 (v2.0.1, v2.0.0, v1.0.0)<br>• **Major Version Lock (v2 고정) 정책** 명시 | **전체** |
+| **[`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md)** | • Google Cloud OAuth (`credentials.json`, `token.json`) 설정<br>• Gemini API Key 발급 및 `config.json` 매핑<br>• SSH 및 Git Push 인증 구성 | **설치 및 사전 준비** |
+| **[`docs/USAGE_GUIDE.md`](docs/USAGE_GUIDE.md)** | • 모바일 구글 제미나이 앱 및 독스 활용법<br>• 커맨드 치트시트 (`!분석`, `!작업`, `!실행`)<br>• 프롬프트 작성 팁 및 결과 확인법 | **일상 사용 및 모바일 운용** |
+| **[`docs/MAINTENANCE_AND_UNINSTALL_GUIDE.md`](docs/MAINTENANCE_AND_UNINSTALL_GUIDE.md)** | • 최신 패치 업데이트 방법 (`git pull` & 데몬 재기동)<br>• 관리 대상 저장소 추가/수정<br>• 4단계 시스템 완전 삭제(Uninstall) 절차 | **유지보수, 업데이트 및 삭제** |
+| **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** | • Dispatcher-Executor 패턴 심층 설계<br>• Seam 원칙 및 모듈 인터페이스 명세<br>• 가드레일 및 오류 격리 메커니즘 | **기술 동작 원리 / 아키텍처** |
+| **[`docs/AUTO_STARTUP_GUIDE.md`](docs/AUTO_STARTUP_GUIDE.md)** | • Windows-WSL2 2단계 무인 자동 실행 원리<br>• VBS 스크립트 및 `systemd` 서비스 구성<br>• 무중단 상시 구동 트러블슈팅 | **부팅 자동화 원리 / 운영** |
+| **[`CHANGELOG.md`](CHANGELOG.md)** | • 릴리스 히스토리 (v2.0.1, v2.0.0, v1.0.0)<br>• **Major Version Lock (v2 고정) 정책** 명시 | **버전 이력 관리** |
+
 
 ---
 
