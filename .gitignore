@@ -1,3 +1,6 @@
 credentials.json
 token.json
 result.log
+__pycache__/
+*.pyc
+
