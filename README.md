@@ -1,92 +1,100 @@
-# gem-bridge (v2 Core Architecture)
+# gem-bridge (v2.0.1 Core Architecture)
 
-Google Gemini Mobile App과 로컬/원격 Git 리포지토리를 연결하는 모듈형 에이전트 브리지 시스템.
-단일 스크립트 구조를 탈피하여 **Dispatcher-Executor 패턴**과 **Read/Write 물리적 분리 및 안전 가드레일**을 구축하였습니다.
+> **스마트폰의 Google Gemini 모바일 앱 및 Google Docs와 로컬/원격 Git 저장소를 유기적으로 연결하는 모듈형 에이전트 브리지 시스템**
+
+단일 스크립트 구조를 탈피하여 **Dispatcher-Executor 패턴**과 **Read/Write 물리적 분리 및 안전 가드레일**을 완벽하게 구축한 v2 아키텍처입니다.
 
 ---
 
-## 🏗️ 아키텍처 개요
+## 🎯 개발 목적 및 핵심 가치
+
+1. **모바일 개발 워크플로우 실현**:
+   - 이동 중이나 침대 위에서 스마트폰으로 구글 문서에 아이디어나 분석 요청을 적으면, PC 데몬이 이를 감지하여 소스코드를 분석해 보고서를 작성하거나 코드를 수정하고 GitHub에 Push합니다.
+2. **Read/Write 물리적 격리 및 코드 파괴 방지**:
+   - 조회/분석(`READ`) 시에는 `git push`나 파일 수정을 절대 하지 않습니다.
+   - 명시적인 커맨드가 없거나 모호한 요청은 **무조건 안전한 분석 보고서(READ)로만 응답**합니다.
+3. **100% 무인 상시 가동 (WSL2 부팅 연동)**:
+   - Windows 재부팅 후에도 사용자가 터미널을 열 필요 없이, 백그라운드에서 조용히 자동 구동됩니다.
+
+---
+
+## 🏗️ 시스템 아키텍처 개요
 
 ```
-[Google Drive 작업 문서 감지]
-           │
-           ▼
-     daemon_v2.py (경량 디스패처)
-           │
-           ▼
-  core/intent_analyzer.py (자연어/커맨드 분석 및 Pydantic JSON 스키마 강제)
-           │
-           ├─► TaskType.READ  ──► core/executor_read.py  (Git Push 절대 금지, 소스 수집 및 [보고서] 생성)
-           ├─► TaskType.WRITE ──► core/executor_write.py (보호 파일 가드레일, Diff 생성, Git Commit & Push)
-           └─► TaskType.EXEC  ──► core/executor_exec.py  (안전 명령어 실행 및 [실행결과] 회신)
-           │
-           ▼
-  core/repo_manager.py (Public Shallow Clone/Pull & 로컬 경로/권한 검증)
+┌──────────────────────────────────────────────────────────────┐
+│                    Google Drive API                          │
+│   [모바일 지시 문서] ──► daemon_v2.py ──► [회신: 독스 보고서]  │
+└──────────────────────────────┬───────────────────────────────┘
+                               ▼
+                    core/intent_analyzer.py
+              (gemini-3.6-flash Pydantic JSON 강제)
+                               │
+       ┌───────────────────────┼───────────────────────┐
+       ▼                       ▼                       ▼
+  TaskType.READ           TaskType.WRITE          TaskType.EXEC
+┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐
+│core/executor_read.py│ │core/executor_write.py││core/executor_exec.py│
+│ - Git Push 절대 금지│ │ - 보호 파일 차단    │ │ - 위험 커맨드 차단  │
+│ - 소스 컨텍스트 수집│ │ - Unified Diff 생성 │ │ - 안전한 쉘 실행    │
+│ - [보고서] 독스 생성│ │ - Git commit & push │ │ - [실행결과] 회신   │
+└─────────────────────┘ └─────────────────────┘ └─────────────────────┘
+                               │
+                               ▼
+                      core/repo_manager.py
+    (Public Shallow Clone ~/workspace/repos/ & 로컬 매핑 검증)
 ```
 
 ---
 
-## 📦 모듈 구성
+## 📚 전체 공식 문서 맵 (Documentation Index)
 
-1. **`core/intent_analyzer.py`**:
-   - 자연어 지시 및 명시적 커맨드(`!분석`, `!작업`, `!실행`) 파싱.
-   - `gemini-3.6-flash` 모델 기반 정형 Pydantic JSON 스키마 강제.
-   - **Default = READ 원칙**: 지시가 불명확하거나 파일 수정 파라미터가 누락된 경우 무조건 READ로 강등.
+프로젝트를 원활하게 이해하고 운영하기 위해 아래의 상세 문서들을 제공합니다:
 
-2. **`core/repo_manager.py`**:
-   - 대상 저장소 확인 및 동적 준비.
-   - **Public 저장소**: `~/workspace/repos/` 하위에 `--depth 1` shallow clone 및 pull 수행.
-   - **Private/로컬 저장소**: `config.json` 매핑 검증 및 디렉토리 접근 권한 확인.
-
-3. **`core/executor_read.py` (READ 전용)**:
-   - **Git Push 및 파일 수정 절대 금지** (엄격한 Read-Only).
-   - 저장소 트리 구조 및 핵심 소스코드 컨텍스트 수집.
-   - `gemini-3.6-flash`를 통해 심층 마크다운 분석 보고서 생성.
-   - Google Drive API를 통해 `[보고서] {제목}` 형태의 신규 Google Docs 문서로 업로드 회신.
-
-4. **`core/executor_write.py` (WRITE 전용)**:
-   - **보호 파일 덮어쓰기 방지 가드레일** (`README*`, `ARCHITECTURE*`, `credentials.json`, `token.json`, `.env*` 등).
-   - 반영 전 변경 사항에 대한 Unified Diff 생성 및 로깅.
-   - 파일 쓰기 후 `git add`, `git commit -m`, `git push` 자동 수행.
-
-5. **`core/executor_exec.py` (EXEC 전용)**:
-   - 시스템 위험 명령 차단 및 안전한 명령어 실행.
-   - 결과(stdout/stderr)를 Google Docs `[실행결과] ...`로 회신.
-
-6. **`daemon_v2.py`**:
-   - Google Drive 폴링 및 메인 루프 (경량 디스패처).
-   - 작업 완료 시 원본 문서 휴지통 이동.
-   - 예외 발생 시 `[오류] ...` 문서를 Drive에 생성하고 로컬 `result.log`에 안전 기록하여 **크래시 방지**.
+| 문서명 | 주요 내용 | 대상 독자 |
+| :--- | :--- | :--- |
+| **[`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md)** | • Google Cloud OAuth (`credentials.json`, `token.json`) 설정<br>• Gemini API Key 발급 및 `config.json` 매핑<br>• SSH 및 Git Push 인증 구성 | **처음 시작하는 사용자** |
+| **[`docs/USAGE_GUIDE.md`](docs/USAGE_GUIDE.md)** | • 모바일 구글 제미나이 앱 및 독스 활용법<br>• 커맨드 치트시트 (`!분석`, `!작업`, `!실행`)<br>• 프롬프트 작성 팁 및 결과 확인법 | **일상 사용자 / 모바일 작업자** |
+| **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** | • Dispatcher-Executor 패턴 심층 설계<br>• Seam 원칙 및 모듈 인터페이스 명세<br>• 가드레일 및 오류 격리 메커니즘 | **개발자 / 코드 기여자** |
+| **[`docs/AUTO_STARTUP_GUIDE.md`](docs/AUTO_STARTUP_GUIDE.md)** | • Windows-WSL2 2단계 무인 자동 실행 원리<br>• VBS 스크립트 및 `systemd` 서비스 구성<br>• 무중단 상시 구동 트러블슈팅 | **시스템 관리자 / 운영자** |
+| **[`CHANGELOG.md`](CHANGELOG.md)** | • 릴리스 히스토리 (v2.0.1, v2.0.0, v1.0.0)<br>• **Major Version Lock (v2 고정) 정책** 명시 | **전체** |
 
 ---
 
-## 🚀 실행 방법
+## ⚡ 빠른 시작 (Quick Start)
 
-### 1. v2 데몬 실행 (기본 폴링 모드)
+### 1. 필수 사전 준비
+1. [SETUP_GUIDE.md](docs/SETUP_GUIDE.md)를 참고하여 `credentials.json`, `token.json`, `config.json`을 준비합니다.
+2. 테스트 스위트 실행을 통해 환경 검증:
+   ```bash
+   python3 -m unittest discover -s tests -v
+   ```
+
+### 2. 데몬 실행 방법
 ```bash
+# 기본 상시 백그라운드 데몬 실행
 python3 daemon_v2.py
-```
 
-### 2. 1회 폴링 실행 (테스트 및 배치 모드)
-```bash
+# 1회 폴링 실행 (디버깅 및 단발 테스트용)
 python3 daemon_v2.py --once
 ```
 
-### 3. 단위 및 통합 테스트 실행
-```bash
-python3 -m unittest discover -s tests -v
-```
+### 3. 모바일 지시 테스트
+스마트폰 구글 문서 앱에서 제목을 **`!분석 gem-bridge 구조 요약해줘`** 로 설정하고 본문에 질문을 적어 저장하면, 잠시 후 Google Drive에 **`[보고서] gem-bridge 구조 요약해줘`** 문서가 자동으로 생성됩니다.
 
 ---
 
-## 🔒 핵심 가드레일 규칙
+## 🔒 핵심 가드레일 3원칙
 
-1. **Default는 무조건 READ**: 지시 내용에 구체적인 파일 경로(`target_path`)나 코드(`content`)가 누락되어 모호한 경우, 임의로 코드를 수정하지 않고 분석 보고서(READ)로만 응답합니다.
-2. **보호 파일 파괴 방지**: 리포지토리의 핵심 문서(`README.md`, `ARCHITECTURE.md` 등) 및 인증/설정 파일은 실수로 인한 덮어쓰기가 원천 차단됩니다.
-3. **무중단 크래시 방지**: 네트워크 오류나 권한 예외 등 돌발 상황 발생 시에도 프로세스가 종료되지 않고 에러 로그를 남긴 후 다음 작업을 안전하게 처리합니다.
+1. **Default 무조건 READ**:
+   - 지시가 모호하거나 파일 수정 필수값(`target_path`, `content`)이 누락된 경우 파일 수정 없이 안전하게 분석 보고서(`READ`)로만 처리합니다.
+2. **보호 파일 파괴 차단**:
+   - `README.md`, `ARCHITECTURE.md`, `credentials.json`, `token.json`, `.env` 등의 파일은 덮어쓰기가 원천 차단됩니다.
+3. **무중단 내결함성 (Crash-Free Loop)**:
+   - 돌발 예외가 발생하더라도 데몬이 다운되지 않으며, `[오류] ...` 독스를 생성하여 모바일로 오류 원인을 알려줍니다.
 
 ---
 
-## ⚙️ 부팅 시 무인 자동 실행 안내
-Windows 재부팅 후에도 터미널 실행 없이 완전히 자동으로 구동되는 2단계 자동 실행 아키텍처에 대한 상세 설명은 **[`docs/AUTO_STARTUP_GUIDE.md`](docs/AUTO_STARTUP_GUIDE.md)** 문서를 참고하세요.
+## 🏷️ 버전 관리 정책
 
+- **현재 버전**: `v2.0.1` ([`core/__version__.py`](core/__version__.py), [`VERSION`](VERSION))
+- **버전 정책**: 사용자의 명시적 허락이 있기 전까지 메이저 버전(`v2.x.x` ➔ `v3.0.0`)은 엄격히 동결되며, 모든 업데이트는 마이너 및 패치(`v2.0.2`, `v2.1.0` 등) 단위로만 점진적으로 진행됩니다.

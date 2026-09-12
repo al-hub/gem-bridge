@@ -1,202 +1,139 @@
-# [보고서] gem-bridge의 core/intent_analyzer.py 모듈의 역할과 JSON 스키마 강제 방식에 대해 상세히 분석해줘.
+# gem-bridge v2 시스템 아키텍처 명세서 (Architecture Reference)
+
+## 1. 개요 및 설계 철학
+
+`gem-bridge`는 스마트폰의 **Google Gemini 모바일 앱** 및 **Google Docs**와 개발자의 로컬/원격 Git 저장소를 유기적으로 연결하는 자동화 브리지 에이전트 시스템입니다.
+
+### 1.1 해결하고자 한 문제 (v1의 한계)
+- **단일 스크립트 결합도**: 기존 `bridge_daemon.py`는 감시, 파싱, 파일 쓰기, Git Push가 단일 루프에 혼재되어 유지보수와 확장이 어려웠습니다.
+- **의도치 않은 파일 파괴**: 자연어 지시가 모호할 때도 임의로 파일을 덮어쓰거나 불필요한 Git Push가 발생하는 치명적인 위험이 존재했습니다.
+- **Cold-start 제약**: PC 재부팅 시 사용자가 WSL 터미널을 열기 전까지 데몬이 실행되지 않는 반쪽짜리 자동화였습니다.
+
+### 1.2 v2 핵심 설계 원칙
+1. **Dispatcher-Executor 패턴**:
+   - 디스패처(`daemon_v2.py`)는 오직 작업 감지 및 라우팅만 담당하고, 실제 처리는 전용 실행기(Executor)로 위임합니다.
+2. **Deep Module 원칙 (Michael Feathers의 Seam 원칙)**:
+   - 각 모듈은 최소한의 인터페이스(Small Surface Area) 뒤에 풍부한 구현(Deep Implementation)을 은닉하여 호출자의 복잡도를 낮춥니다.
+3. **Read / Write의 물리적 분리 및 안전 격리**:
+   - 조회/분석(READ) 모듈에는 `git push` 및 파일 수정 코드가 물리적으로 일체 존재하지 않습니다.
+4. **Default = READ 및 안전 가드레일**:
+   - 지시가 모호하거나 파일 수정 파라미터가 불완전하면 시스템은 무조건 안전한 분석 보고서(READ)로 폴백합니다.
 
 ---
 
-## 1. 개요 및 목적 (Executive Summary)
-
-`gem-bridge` 프로젝트는 Google Drive 감시 데몬(`daemon_v2.py`)을 통해 수신된 자연어 문서나 커맨드 형태의 요청을 로컬 Git 저장소 작업으로 변환·수행하는 자동화 브리지 시스템입니다.
-
-이 파이프라인의 핵심 진입점에 위치한 **`core/intent_analyzer.py`** 모듈은 사용자가 작성한 비정형 구글 문서 내용(제목 및 본문)을 분석하여 **시스템이 이해 가능한 정형화된 작업 객체(`IntentAnalysisResult`)로 변환**하는 역할을 담당합니다.
-
-본 보고서에서는 `core/intent_analyzer.py` 모듈의 주요 역할과 내부 동작 메커니즘, 그리고 **Pydantic과 Google Gemini API(`gemini-3.6-flash`)를 활용한 JSON 스키마 강제 및 검증 방식**에 대해 체계적으로 분석합니다.
-
----
-
-## 2. 코드베이스 구조 및 주요 컴포넌트 분석
-
-### 2.1 아키텍처 상의 위치
-`daemon_v2.py` 데몬 프로세스는 구글 드라이브에서 신규 작업 문서를 감지한 후 `IntentAnalyzer`를 호출합니다. 분석 결과 생성된 `IntentAnalysisResult` 객체의 `task_type`에 따라 각 전용 Executor(`ReadExecutor`, `WriteExecutor`, `ExecExecutor`)로 작업을 분기(Dispatch)합니다.
+## 2. 전체 시스템 아키텍처
 
 ```
-[Google Drive Task Doc]
-          │
-          ▼
-   [daemon_v2.py]
-          │
-          ▼
-┌──────────────────────────────────────────────┐
-│ core/intent_analyzer.py (IntentAnalyzer)     │
-│  - 1단계: Direct JSON 파싱                     │
-│  - 2단계: 명령어 Prefix 감지 (!분석, !작업)   │
-│  - 3단계: Gemini LLM 기반 구조화 분석         │
-└──────────────────────────────────────────────┘
-          │
-          ▼ (IntentAnalysisResult)
-┌──────────────────────────────────────────────┐
-│ TaskType 분기                                │
-│  ├─ READ  ──> ReadExecutor                   │
-│  ├─ WRITE ──> WriteExecutor                  │
-│  └─ EXEC  ──> ExecExecutor                   │
-└──────────────────────────────────────────────┘
-```
-
-### 2.2 모듈 내 핵심 클래스 정의
-
-#### 1) `TaskType` (Enum)
-작업의 성격을 3가지 기본 타입으로 정의합니다. 안전성을 극대화하기 위해 기본값은 항상 `READ`로 처리됩니다.
-- `READ`: 단순 조회, 코드베이스 분석, 질문 답변 (기본값)
-- `WRITE`: 파일 생성/수정 및 Git 커밋
-- `EXEC`: 쉘 명령 또는 테스트 실행
-
-#### 2) `IntentAnalysisResult` (Pydantic BaseModel)
-LLM 및 파서가 반환해야 하는 데이터 구조의 **단일 표준 진실 데이터 모델(Single Source of Truth)**입니다.
-
-```python
-# core/intent_analyzer.py
-class TaskType(str, Enum):
-    READ = "READ"
-    WRITE = "WRITE"
-    EXEC = "EXEC"
-
-
-class IntentAnalysisResult(BaseModel):
-    task_type: TaskType = Field(
-        default=TaskType.READ,
-        description="Task type: READ (for queries, analysis, inspections, default), WRITE (for modifying/creating files with git commit), EXEC (for running commands/tests). Default MUST be READ."
-    )
-    target_repo: str = Field(
-        default="gem-bridge",
-        description="Target repository name (from available repos) or public git clone URL (e.g., https://github.com/...)"
-    )
-    summary: str = Field(
-        ...,
-        description="Concise summary of the user's intent"
-    )
-    query: Optional[str] = Field(
-        None,
-        description="Analysis question or topic for READ tasks"
-    )
-    target_files_or_dirs: Optional[List[str]] = Field(
-        default_factory=list,
-        description="List of specific files or directories mentioned in the request"
-    )
-    target_path: Optional[str] = Field(
-        None,
-        description="Relative path of file to create or modify for WRITE tasks"
-    )
-    content: Optional[str] = Field(
-        None,
-        description="Full content of the file to write for WRITE tasks"
-    )
-    commit_message: Optional[str] = Field(
-        None,
-        description="Git commit message for WRITE tasks"
-    )
-    exec_command: Optional[str] = Field(
-        None,
-        description="Shell command to execute for EXEC tasks"
-    )
-    reasoning: Optional[str] = Field(
-        None,
-        description="Reasoning behind task type selection and extracted fields"
-    )
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                             Google Drive API                                │
+│   [사용자 모바일 지시 문서]                       [회신: 독스 보고서/결과]    │
+└───────────────────────┬─────────────────────────────────────▲───────────────┘
+                        │ (Polling / Export)                  │ (Create Docs)
+                        ▼                                     │
+┌─────────────────────────────────────────────────────────────┼───────────────┐
+│ daemon_v2.py (경량 디스패처)                                 │               │
+│   - Drive 감시 및 시스템 접두어 필터링                     │               │
+│   - 완료 시 원본 문서 휴지통 이동                           │               │
+│   - 에러 발생 시 크래시 방지 및 [오류] 문서 생성 ───────────┘               │
+└───────────────────────┬─────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ core/intent_analyzer.py (IntentAnalyzer)                                    │
+│   - 커맨드 접두어 분석 (!분석, !작업, !실행)                                 │
+│   - gemini-3.6-flash 모델 기반 정형 Pydantic JSON 스키마 강제                │
+│   - Default = READ 강등 가드레일                                            │
+└───────────┬──────────────────────────┬──────────────────────────┬───────────┘
+            │ TaskType.READ            │ TaskType.WRITE           │ TaskType.EXEC
+            ▼                          ▼                          ▼
+┌───────────────────────┐  ┌───────────────────────┐  ┌───────────────────────┐
+│ core/executor_read.py │  │core/executor_write.py │  │ core/executor_exec.py │
+│ - Git Push 절대 금지  │  │ - 보호 파일 차단      │  │ - 위험 커맨드 차단    │
+│ - 소스 컨텍스트 수집  │  │ - Unified Diff 생성   │  │ - 샌드박스 실행       │
+│ - Gemini 심층 보고서  │  │ - 파일 쓰기 및 커밋   │  │ - [실행결과] 회신     │
+│ - [보고서] 독스 생성 ──► │ - Git Push 수행 ─────►│  │ ─────────────────────►│
+└───────────┬───────────┘  └───────────┬───────────┘  └───────────┬───────────┘
+            └──────────────────────────┼──────────────────────────┘
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ core/repo_manager.py (RepoManager)                                          │
+│   - Public Git URL: ~/workspace/repos/ 하위 shallow clone/pull (--depth 1)  │
+│   - Local Repository: config.json 매핑 검증 및 디렉토리/파일 권한 확인       │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 3. 핵심 발견점 및 상세 답변 (Deep Dive)
+## 3. 핵심 컴포넌트 상세 명세
 
-### 3.1 `core/intent_analyzer.py` 모듈의 역할
+### 3.1 `core/intent_analyzer.py`
+- **역할**: 입력된 비정형 문서 텍스트로부터 작업 유형(`TaskType`)과 대상 저장소(`TargetRepo`)를 정확히 도출합니다.
+- **인터페이스**:
+  ```python
+  def analyze(raw_text: str, title: str = "", available_repos: Optional[List[str]] = None) -> IntentAnalysisResult
+  ```
+- **데이터 모델 (`IntentAnalysisResult`)**:
+  - `task_type: TaskType` (`READ`, `WRITE`, `EXEC`) - 기본값: `READ`
+  - `target_repo: str` (로컬 식별자 또는 퍼블릭 Git URL)
+  - `summary: str` (요청 요약)
+  - `query: Optional[str]` (READ 질문/주제)
+  - `target_path: Optional[str]` (WRITE 대상 파일)
+  - `content: Optional[str]` (WRITE 대상 내용)
+  - `commit_message: Optional[str]` (Git 커밋 메시지)
+  - `exec_command: Optional[str]` (EXEC 커맨드)
 
-`IntentAnalyzer` 클래스의 핵심 역할은 다음과 같이 4가지로 요약할 수 있습니다.
+### 3.2 `core/repo_manager.py`
+- **역할**: 동적으로 작업 대상 리포지토리를 판별하고 안전하게 준비합니다.
+- **인터페이스**:
+  ```python
+  def prepare_repo(target_repo: str) -> Path
+  ```
+- **동작 분기**:
+  - **Public 저장소**: URL 정규식 감지 시 `~/workspace/repos/<repo_name>`에 `--depth 1` shallow clone 수행 (이미 존재할 경우 shallow pull 업데이트).
+  - **Local 저장소**: `config.json`의 `repositories` 매핑 검증, 경로 존재 유무 및 파일 읽기/쓰기 권한 검사. 미지정 시 기본 저장소(`gem-bridge`)로 안전 폴백.
 
-1. **비정형 자연어 명령의 구조화**: 사용자가 입력한 제목과 본문을 조합(`"제목: ... \n본문: ..."`)하여 의도를 파악합니다.
-2. **다단계 하이브리드 의도 분석 (Hybrid Intent Parsing)**:
-   - LLM 호출 비용 및 지연 시간을 줄이기 위해 **직접 JSON**, **명령어 Prefix(!분석, !작업, !실행)**, **LLM 분석** 순으로 3단계 파싱을 수행합니다.
-3. **작업 대상 저장소 결정**: `config.json`에 정의된 사용 가능한 저장소 목록(`available_repos`) 중 어느 저장소를 대상으로 작업할지 추출하며, 기본값으로 `"gem-bridge"`를 할당합니다.
-4. **결함 허용(Fault Tolerance) 및 Safe Fallback 보장**: LLM API 호출 실패, API Key 미설정, 혹은 JSON 파싱 오류 발생 시 시스템이 정지되지 않고 안전한 `READ` 타입의 Fallback 객체를 반환합니다.
+### 3.3 `core/executor_read.py` (READ 전용)
+- **역할**: 코드베이스 컨텍스트를 분석하여 심층 보고서를 생성하고 구글 드라이브에 독스로 업로드합니다.
+- **보안성**: `git push` 및 파일 쓰기 권한을 물리적으로 원천 차단한 Read-Only 컴포넌트입니다.
+- **보고서 생성 파이프라인**:
+  1. 리포지토리 디렉토리 트리 및 대상 소스코드 파일 추출 (최대 크기 안전 제한 적용).
+  2. `gemini-3.6-flash`로 4단계 구조화 보고서(개요, 아키텍처 분석, 상세 발견점, 개선 제안) 생성.
+  3. Google Drive API의 `MediaInMemoryUpload`를 통해 `[보고서] {제목}` 형태의 네이티브 Google Docs로 업로드.
 
-```python
-# core/intent_analyzer.py 일부
-def analyze(
-    self,
-    raw_text: str,
-    title: str = "",
-    available_repos: Optional[List[str]] = None
-) -> IntentAnalysisResult:
-    available_repos = available_repos or [self.default_repo]
-    combined_text = f"제목: {title}\n본문:\n{raw_text}".strip()
+### 3.4 `core/executor_write.py` (WRITE 전용)
+- **역할**: 소스코드 파일을 안전하게 생성/수정하고 Git 커밋 및 푸시를 수행합니다.
+- **가드레일 메커니즘**:
+  1. **디렉토리 탈출 방지**: `target_path`가 리포지토리 루트를 벗어나지 못하도록 `Path.is_relative_to` 검증.
+  2. **보호 파일 덮어쓰기 방지**: `README*`, `ARCHITECTURE*`, `credentials.json`, `token.json`, `.env*` 등의 파일이 이미 존재할 경우 `ProtectedFileError`를 발생시켜 파괴적 수정을 차단.
+  3. **Unified Diff 감사 로깅**: 변경 전 파일과 신규 내용 간의 차이점을 `difflib`으로 계산하여 로그에 보존.
+  4. **Git 자동화**: `git add`, `git commit -m`, `git push` 순차 실행 및 최신 커밋 해시 반환.
 
-    # 1. Direct JSON payload 파싱 시도 (Legacy 또는 명시적 JSON 지원)
-    json_payload = self._extract_raw_json(raw_text)
-    if json_payload and isinstance(json_payload, dict):
-        direct_result = self._parse_from_json_dict(json_payload, available_repos)
-        if direct_result:
-            return direct_result
+### 3.5 `core/executor_exec.py` (EXEC 전용)
+- **역할**: 테스트 및 명령어 안전 실행.
+- **가드레일**: `rm -rf /`, `mkfs`, 포크폭탄 등 치명적 명령어를 패턴 매칭으로 차단하고, 타임아웃(기본 60초) 내에서만 실행.
 
-    # 2. 명시적 명령어 Prefix 감지 (!분석, !작업, !실행 등)
-    command_hint = self._detect_command_prefix(title, raw_text)
-
-    # 3. Gemini LLM (gemini-3.6-flash) 구조화 분석
-    if not self.client:
-        logger.warning("Gemini Client not initialized... Falling back to default READ intent.")
-        return self._build_fallback_read_intent(combined_text, available_repos, "Missing API Key")
-
-    try:
-        return self._analyze_with_llm(combined_text, available_repos, command_hint)
-    except Exception as e:
-        logger.error(f"Failed to analyze intent with LLM: {e}. Falling back to safe READ intent.")
-        return self._build_fallback_read_intent(
-            combined_text, available_repos, f"LLM parsing error fallback: {e}"
-        )
-```
-
----
-
-### 3.2 JSON 스키마 강제 방식 (JSON Schema Enforcement)
-
-`intent_analyzer.py`가 LLM의 환각(Hallucination)이나 형식이 맞지 않는 출력을 방지하고 **엄격한 JSON 스키마를 강제하는 방식**은 다음과 같은 4단계 레이어로 구현되어 있습니다.
-
-#### Layer 1: Pydantic Schema를 통한 명확한 스키마 및 메타데이터 정의
-- Pydantic의 `Field(description=...)` 메타데이터를 작성하여 필드별 요구사항과 힌트를 명시합니다.
-- 예: `task_type` 필드 설명에 `"Default MUST be READ."` 및 `WRITE`, `EXEC`의 상세 조건을 명시함으로써 LLM 프롬프트 생성 시 자연스러운 제약조건을 제공합니다.
-
-#### Layer 2: Prefix 감지를 통한 TaskType 힌트 튜닝 (`_detect_command_prefix`)
-사용자가 문서 제목/본문 첫 줄에 `!분석`, `!작업`, `!실행` 등의 힌트를 제공한 경우, 이를 사전 감지하여 LLM 추론 단계에 힌트(`command_hint`)로 전달하여 정형화 분류의 정확도를 극대화합니다.
-
-```python
-# core/intent_analyzer.py
-def _detect_command_prefix(self, title: str, text: str) -> Optional[TaskType]:
-    check_str = f"{title}\n{text}".strip().lower()
-    first_line = check_str.split("\n")[0].strip()
-
-    if any(first_line.startswith(p) for p in ["!분석", "!analyze", "!조회", "!read", "!검토"]):
-        return TaskType.READ
-    if any(first_line.startswith(p) for p in ["!작업", "!write", "!수정", "!task"]):
-        return TaskType.WRITE
-    if any(first_line.startswith(p) for p in ["!실행", "!exec", "!run"]):
-        return TaskType.EXEC
-    return None
-```
-
-#### Layer 3: 구글 Gemini SDK (`google.genai`)의 Structured Output 및 JSON 전용 설정
-- `google.genai` 신규 SDK의 `Client`를 사용하며, 최신 모델인 `gemini-3.6-flash`를 타겟팅합니다.
-- `bridge_daemon.py` 및 `IntentAnalyzer` 내 LLM 호출 시 `config={"response_mime_type": "application/json"}` 옵션 또는 Pydantic 응답 스키마를 지정함으로써 모델이 Markdown Text가 아닌 **순수 JSON 문자열만 출력**하도록 API 수준에서 강제합니다.
-
-#### Layer 4: Strict Parsing 및 Safe Fallback
-- LLM 응답 JSON 문자열은 `IntentAnalysisResult.model_validate()` 또는 `json.loads()`를 거쳐 Pydantic 모델 인스턴스로 타입 검증을 받습니다.
-- 만약 필드 타입 불일치, 필수 필드(`summary`) 누락, JSON 문법 오류 발생 시 예외(Exception)가 포착되고 `_build_fallback_read_intent()`가 실행됩니다.
-- 이는 파생 작업으로 발생할 수 있는 원치 않는 파일 수정/삭제(`WRITE`)나 무단 명령어 실행(`EXEC`)을 차단하고, 가장 안전한 **기본 읽기 권한 작업(`READ`)으로 강제 강하(Fallback)**시키는 강력한 안전장치입니다.
+### 3.6 `daemon_v2.py` (디스패처 및 크래시 방지)
+- **역할**: 구글 드라이브를 3~5초 간격으로 폴링하여 작업을 감지하고 각 실행기로 디스패치합니다.
+- **무중단 내결함성**:
+  - 개별 태스크 처리 도중 예외가 발생하더라도 메인 루프가 종료되지 않습니다.
+  - 예외 트레이스백을 구글 드라이브의 `[오류] {제목}` 문서로 즉시 업로드하여 모바일 사용자에게 알리고, 로컬 `result.log`에 안전하게 기록합니다.
+  - 정상 처리된 문서는 구글 드라이브 휴지통으로 이동시켜 중복 실행을 방지합니다.
 
 ---
 
-## 4. 권장사항 및 개선점 (Recommendations & Next Steps)
+## 4. 무인 자동 기동 (WSL 2-Stage Auto-Startup)
 
-1. **LLM Structured Output 설정 명시화 (`response_schema`)**:
-   - 현재 `google.genai` SDK는 `config={"response_mime_type": "application/json", "response_schema": IntentAnalysisResult}`와 같이 Pydantic 클래스를 직접 전달하는 기능을 지원합니다. `_analyze_with_llm` 메서드 작성 시 해당 옵션을 명시적으로 적용하면 LLM이 스키마를 100% 준수하도록 API 단에서 보장할 수 있습니다.
+Windows 호스트 재부팅 시에도 사용자가 터미널을 열지 않고 백그라운드에서 동작할 수 있도록 2단계 자동 실행을 구현했습니다:
 
-2. **`target_path` 및 명령어에 대한 입력값 검증(Guardrails) 추가**:
-   - `IntentAnalysisResult` 수준에서는 형식만 검증되므로, `WRITE` 태스크의 `target_path`에 대한 Path Traversal (예: `../../etc/passwd`) 검증 로직 또는 `EXEC` 태스크의 차단 명령어 목록(Blacklist) 검증을 `IntentAnalyzer` 검증 단계 직후 추가하는 것이 보안상 안전합니다.
+1. **1단계 (Windows)**: 시작프로그램의 `start_wsl_bridge.vbs`가 창 없이 조용히 `wsl.exe --exec /bin/true`를 호출.
+2. **2단계 (WSL)**: `/etc/wsl.conf`에 의해 `systemd`가 기동되면서 `/etc/systemd/system/gem-bridge.service`가 `daemon_v2.py`를 영구 구동.
 
-3. **단위 테스트(Unit Test) 확충**:
-   - `tests/test_intent_analyzer.py`에 올바른 JSON 파싱 외에도 잘못된 JSON, 알 수 없는 명령어 Prefix, LLM API failure 상황에서의 `READ` Fallback 정상 동작 여부를 검증하는 에지 케이스(Edge Case) 테스트를 보강하는 것을 권장합니다.
+> 상세 가이드는 [AUTO_STARTUP_GUIDE.md](AUTO_STARTUP_GUIDE.md)를 참고하세요.
+
+---
+
+## 5. 버전 관리 및 변경 정책
+
+- **Single Source of Truth**: [`core/__version__.py`](../core/__version__.py) 및 [`VERSION`](../VERSION)
+- **Major Version Lock**: 메이저 버전(`v2.x.x` ➔ `v3.0.0`)은 사용자의 명시적 허락이 있기 전까지 엄격히 동결됩니다.
+- **마이너/패치 정책**: 향후 기능 개선 및 버그 수정은 Minor / Patch 단위(`v2.0.2`, `v2.1.0` 등)로만 점진적 릴리스됩니다.
