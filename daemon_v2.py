@@ -74,7 +74,7 @@ class GemBridgeDaemonV2:
         "[보고서]", "[완료]", "[오류]", "[실행결과]",
         "[📄분석", "[✅커밋", "[💻실행", "[⚠️오류", "[📌"
     ]
-    TRIGGER_KEYWORDS = ["!", "깃", "task", "작업", "분석", "실행", "gem-bridge", "보고서", "console"]
+    TRIGGER_KEYWORDS = ["!", "깃", "task", "작업", "분석", "실행", "gem-bridge", "보고서", "console", "gemini"]
 
     def __init__(self, config: Optional[dict] = None):
         self.config = config or load_config()
@@ -764,8 +764,8 @@ class GemBridgeDaemonV2:
             if file_id in self.processed_ids:
                 continue
 
-            # Check trigger keywords
-            if any(k.lower() in file_name.lower() for k in self.TRIGGER_KEYWORDS):
+            # Check trigger keywords or Gemini mobile export prefix
+            if file_name.startswith("Gemini -") or any(k.lower() in file_name.lower() for k in self.TRIGGER_KEYWORDS):
                 candidates.append(f)
 
         return candidates

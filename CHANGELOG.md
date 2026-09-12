@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.7] - 2026-09-12
+
+### Added
+- **Gemini Mobile Native 1-Tap & 1-Click Zero-Copy Dispatcher (`daemon_v2.py`)**:
+  - Full native support for Google Gemini mobile app's built-in **[공유] ➔ [Google 문서로 내보내기] (Export to Docs)** action (`Gemini - *` documents).
+  - Automatically detects exported Gemini task documents, extracts intent, dispatches to `ReadExecutor`/`WriteExecutor`, trashes the temporary document, and syncs output to `[최신결과] CONSOLE`.
+  - Added `"gemini"` keyword to `TRIGGER_KEYWORDS` and prefix matching for `Gemini -` exports.
+  - Zero-Copy & Zero-Paste: Users never need to manually copy or paste text between apps; single tap on Google's native export button dispatches the task immediately.
+- **Protocol & System Instructions Update (`docs/MOBILE_GEM_PROTOCOL.md`)**:
+  - Documented both Native Export 1-Tap and 1-Click Webhook execution paths.
+  - In-Chat 0-Click verification via Gemini's native `@Google Drive` extension.
+
+---
+
 ## [2.1.6] - 2026-09-12
 
 ### Added
