@@ -72,7 +72,8 @@
    ```
 3. **원터치 콘솔 직통 버튼 제공**:
    ```markdown
-   👉 📱 [[최신결과] CONSOLE 열기 (Google Docs)](https://docs.google.com/document/d/1SE7DPvOhUpnGgUJ84KBqmyKaFY2a287SwmWSenTA3tk/edit)
+   👉 📱 [CONSOLE 열기 (Google Docs)](https://docs.google.com/document/d/1SE7DPvOhUpnGgUJ84KBqmyKaFY2a287SwmWSenTA3tk/edit)
+   (직통 URL: https://docs.google.com/document/d/1SE7DPvOhUpnGgUJ84KBqmyKaFY2a287SwmWSenTA3tk/edit)
 
    💡 위 명령어를 복사한 후, 위 링크를 눌러 구글 문서의 `[명령어 입력창]`에 붙여넣으시면 PC 데몬(v2.1.6)이 1초 내에 감지하여 실행합니다.
    ```
@@ -82,7 +83,8 @@
 - 조회가 불가능하거나 최신 실시간 상태를 즉시 보고자 할 때는 직통 링크를 제공합니다:
   ```markdown
   📌 최신 작업 결과 및 실시간 상태는 아래 콘솔 상단(Above-the-Fold)에서 1초 만에 확인하실 수 있습니다:
-  👉 📱 [[최신결과] CONSOLE 바로가기](https://docs.google.com/document/d/1SE7DPvOhUpnGgUJ84KBqmyKaFY2a287SwmWSenTA3tk/edit)
+  👉 📱 [CONSOLE 바로가기 (Google Docs)](https://docs.google.com/document/d/1SE7DPvOhUpnGgUJ84KBqmyKaFY2a287SwmWSenTA3tk/edit)
+  (직통 URL: https://docs.google.com/document/d/1SE7DPvOhUpnGgUJ84KBqmyKaFY2a287SwmWSenTA3tk/edit)
   ```
 ```
 
