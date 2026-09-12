@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 import json
 import os
-import re
 import subprocess
 import time
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -14,13 +12,14 @@ CONFIG_PATH = BASE_DIR / "config.json"
 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
     config = json.load(f)
 
-# 기본 감시 대상: GeminiBridge 폴더 및 내 드라이브 루트
 BRIDGE_DIR = Path(config["bridge_dir"])
 DRIVE_ROOT = BRIDGE_DIR.parent  # /mnt/g/내 드라이브
 PROCESSED_DIR = BRIDGE_DIR / "processed"
 LOG_FILE = BRIDGE_DIR / "result.log"
 REPO_MAP = {k: Path(v) for k, v in config["repositories"].items()}
 POLL_INTERVAL = config.get("poll_interval_seconds", 3)
+
+PROCESSED_NAMES = set()
 
 def log_message(msg: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -30,28 +29,37 @@ def log_message(msg: str):
         PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(formatted + "\n")
-    except Exception as e:
-        print(f"Log write failed: {e}")
+    except Exception:
+        pass
 
-def extract_text_from_file(file_path: Path) -> str:
-    """일반 파일(.json/.txt) 또는 Google Docs 바로가기(.gdoc)에서 텍스트 추출"""
+def read_file_content(file_path: Path) -> str:
+    """WSL I/O 에러 방지를 위해 Windows powershell.exe를 통해 안전하게 파일 본문 읽기"""
+    # Windows 경로로 변환 (예: /mnt/g/내 드라이브/... -> G:\내 드라이브\...)
+    wsl_str = str(file_path.resolve())
+    if wsl_str.startswith("/mnt/g/"):
+        win_path = "G:\\" + wsl_str[len("/mnt/g/"):].replace("/", "\\")
+    else:
+        win_path = wsl_str
+
+    cmd = ["powershell.exe", "-NoProfile", "-Command", f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Content -LiteralPath '{win_path}' -Raw"]
+    res = subprocess.run(cmd, capture_output=True, text=True, errors="ignore")
+    
+    if res.returncode == 0 and res.stdout.strip():
+        return res.stdout.strip()
+
+    # 일반 읽기 폴백
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-        raw_content = f.read().strip()
+        return f.read().strip()
 
-    # .gdoc 파일인 경우 doc_id 파싱 후 텍스트 다운로드 시도
-    if file_path.suffix.lower() == ".gdoc" or '"doc_id"' in raw_content:
-        try:
-            doc_meta = json.loads(raw_content)
-            doc_id = doc_meta.get("doc_id")
-            if doc_id:
-                export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
-                req = urllib.request.Request(export_url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req) as resp:
-                    return resp.read().decode("utf-8").strip()
-        except Exception as e:
-            log_message(f"Public export failed ({e}), fallback to local raw text")
-
-    return raw_content
+def remove_drive_file(file_path: Path):
+    """Google Drive 가상 파일 삭제/이동 처리"""
+    wsl_str = str(file_path.resolve())
+    if wsl_str.startswith("/mnt/g/"):
+        win_path = "G:\\" + wsl_str[len("/mnt/g/"):].replace("/", "\\")
+        cmd = ["powershell.exe", "-NoProfile", "-Command", f"Remove-Item -LiteralPath '{win_path}' -Force"]
+        subprocess.run(cmd, capture_output=True)
+    else:
+        file_path.unlink(missing_ok=True)
 
 def execute_git_task(repo_path: Path, target_path: str, content: str, commit_message: str):
     full_target_file = repo_path / target_path
@@ -67,14 +75,26 @@ def execute_git_task(repo_path: Path, target_path: str, content: str, commit_mes
     log_message(f"Push successful to {repo_path.name}")
 
 def parse_json_payload(raw_text: str) -> dict:
-    """마크다운 코드블록이나 불필요한 줄바꿈 제거 후 JSON 객체 추출"""
     text = raw_text.strip()
     if "```json" in text:
         text = text.split("```json")[1].split("```")[0].strip()
     elif "```" in text:
         text = text.split("```")[1].split("```")[0].strip()
-    
-    # 텍스트 내에서 최초 { 부터 마지막 } 까지 슬라이싱 (앞뒤 잡음 제거)
+
+    # Google Docs 메타데이터인 경우 url/doc_id 파싱 확인
+    if '"url":' in text and '"doc_id":' in text:
+        try:
+            meta = json.loads(text)
+            doc_id = meta.get("doc_id")
+            if doc_id:
+                # 윈도우 curl로 텍스트 내보내기 시도
+                export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+                res = subprocess.run(["curl.exe", "-sL", export_url], capture_output=True, text=True, errors="ignore")
+                if res.stdout.strip():
+                    text = res.stdout.strip()
+        except Exception:
+            pass
+
     start_idx = text.find("{")
     end_idx = text.rfind("}")
     if start_idx != -1 and end_idx != -1:
@@ -83,11 +103,15 @@ def parse_json_payload(raw_text: str) -> dict:
     return json.loads(text)
 
 def process_task_file(file_path: Path):
+    if file_path.name in PROCESSED_NAMES:
+        return
+
     log_message(f"Discovered task candidate: {file_path.name}")
-    time.sleep(1)  # 동기화 완료 버퍼
+    PROCESSED_NAMES.add(file_path.name)
+    time.sleep(1)
 
     try:
-        raw_text = extract_text_from_file(file_path)
+        raw_text = read_file_content(file_path)
         data = parse_json_payload(raw_text)
 
         repo_key = data.get("repo")
@@ -100,37 +124,33 @@ def process_task_file(file_path: Path):
 
         execute_git_task(REPO_MAP[repo_key], target_path, content, commit_message)
 
-        # 처리 완료 파일 아카이빙
-        PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-        dest = PROCESSED_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file_path.name}"
-        file_path.rename(dest)
-        log_message(f"Task finished and moved to: {dest.name}")
+        # 처리 완료 후 원본 태스크 삭제
+        remove_drive_file(file_path)
+        log_message(f"Task successfully completed and file cleaned up: {file_path.name}")
 
     except Exception as e:
         log_message(f"[ERROR] Processing {file_path.name}: {str(e)}")
-        error_path = file_path.with_suffix(file_path.suffix + ".error")
-        file_path.rename(error_path)
 
 def scan_for_tasks():
-    # 1. GeminiBridge 폴더 내 모든 .json / .gdoc
     candidates = []
+    # 1. GeminiBridge 폴더
     if BRIDGE_DIR.exists():
         for p in BRIDGE_DIR.iterdir():
-            if p.is_file() and p.suffix.lower() in [".json", ".gdoc", ".txt"] and not p.name.endswith(".error"):
+            if p.is_file() and p.suffix.lower() in [".json", ".gdoc", ".txt"]:
                 candidates.append(p)
 
-    # 2. 내 드라이브 루트에서 'task' 또는 'gem_'으로 시작하는 파일 탐색
+    # 2. 내 드라이브 루트에서 task* 또는 gem_* 시작 파일
     if DRIVE_ROOT.exists():
         for p in DRIVE_ROOT.iterdir():
             if p.is_file() and (p.name.startswith("task") or p.name.startswith("gem_")):
-                if p.suffix.lower() in [".json", ".gdoc", ".txt"] and not p.name.endswith(".error"):
+                if p.suffix.lower() in [".json", ".gdoc", ".txt"]:
                     candidates.append(p)
 
     for task_file in candidates:
         process_task_file(task_file)
 
 def main():
-    log_message("=== Gemini Bridge Daemon (v2: Multi-format & Root Watch) Started ===")
+    log_message("=== Gemini Bridge Daemon (v3: Windows I/O Fallback) Started ===")
     while True:
         try:
             scan_for_tasks()
