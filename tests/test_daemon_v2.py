@@ -317,11 +317,65 @@ class TestDaemonV2(unittest.TestCase):
 
         self.assertIn("gtask_123", self.daemon.processed_task_ids)
         self.daemon.write_executor.execute.assert_called_once()
-        mock_tasks_mgr.complete_task.assert_called_once_with(
-            task_id="gtask_123",
-            completion_notes="✅ [gem-bridge 완료] 커밋: a1b2c3d - docs: update guide.md via 0-tap"
-        )
+        mock_tasks_mgr.update_task_with_feedback.assert_called_once()
+        call_kwargs = mock_tasks_mgr.update_task_with_feedback.call_args[1]
+        self.assertEqual(call_kwargs["task_id"], "gtask_123")
+        self.assertTrue(call_kwargs["is_success"])
+        self.assertEqual(call_kwargs["title"], "gem-bridge docs/guide.md 수정하고 푸시해줘")
+        self.assertIn("a1b2c3d", call_kwargs["feedback_notes"])
+        self.assertIn("+ new content", call_kwargs["feedback_notes"])
         self.daemon._sync_task_result_to_console.assert_called_once()
+
+    def test_check_and_process_google_tasks_read(self):
+        mock_tasks_mgr = MagicMock()
+        mock_tasks_mgr.is_available = True
+        mock_tasks_mgr.list_pending_tasks.return_value = [
+            {"id": "gtask_read_99", "title": "!분석 gem-bridge 전체 구조", "notes": ""}
+        ]
+        self.daemon.tasks_manager = mock_tasks_mgr
+        self.daemon.intent_analyzer.analyze = MagicMock(return_value=IntentAnalysisResult(
+            task_type=TaskType.READ,
+            target_repo="gem-bridge",
+            summary="전체 구조 분석",
+            query="구조 알려줘"
+        ))
+        self.daemon.repo_manager.prepare_repo = MagicMock(return_value="/tmp/dummy-gem-bridge")
+        self.daemon.read_executor.execute = MagicMock(return_value={
+            "status": "success", "doc_name": "[보고서] 전체 구조", "doc_id": "rep_99",
+            "preview": "### 1. 개요\n구조 요약 내용입니다.",
+            "report": "### 1. 개요\n구조 요약 내용입니다."
+        })
+        self.daemon._sync_task_result_to_console = MagicMock()
+
+        self.daemon.check_and_process_google_tasks()
+
+        self.assertIn("gtask_read_99", self.daemon.processed_task_ids)
+        self.daemon.read_executor.execute.assert_called_once()
+        mock_tasks_mgr.update_task_with_feedback.assert_called_once()
+        call_kwargs = mock_tasks_mgr.update_task_with_feedback.call_args[1]
+        self.assertEqual(call_kwargs["task_id"], "gtask_read_99")
+        self.assertTrue(call_kwargs["is_success"])
+        self.assertIn("[분석 완료] gem-bridge", call_kwargs["feedback_notes"])
+        self.assertIn("[전체 보고서 안내]", call_kwargs["feedback_notes"])
+
+    def test_check_and_process_google_tasks_error(self):
+        mock_tasks_mgr = MagicMock()
+        mock_tasks_mgr.is_available = True
+        mock_tasks_mgr.list_pending_tasks.return_value = [
+            {"id": "gtask_err_01", "title": "!작업 unknown-repo 파일수정", "notes": ""}
+        ]
+        self.daemon.tasks_manager = mock_tasks_mgr
+        self.daemon.intent_analyzer.analyze = MagicMock(side_effect=RuntimeError("저장소 접근 실패"))
+
+        self.daemon.check_and_process_google_tasks()
+
+        self.assertIn("gtask_err_01", self.daemon.processed_task_ids)
+        mock_tasks_mgr.update_task_with_feedback.assert_called_once()
+        call_kwargs = mock_tasks_mgr.update_task_with_feedback.call_args[1]
+        self.assertEqual(call_kwargs["task_id"], "gtask_err_01")
+        self.assertFalse(call_kwargs["is_success"])
+        self.assertIn("[실행 오류]", call_kwargs["feedback_notes"])
+        self.assertIn("저장소 접근 실패", call_kwargs["feedback_notes"])
 
 
 if __name__ == "__main__":

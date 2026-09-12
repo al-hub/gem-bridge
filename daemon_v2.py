@@ -1083,98 +1083,166 @@ class GemBridgeDaemonV2:
                 trace_id = TimeTagFormatter.generate_trace_id()
                 now_str = TimeTagFormatter.format_kst()
 
-                # Analyze intent using IntentAnalyzer
-                available_repos = list(self.repo_manager.repo_mapping.keys())
-                intent = self.intent_analyzer.analyze(
-                    raw_text=full_task_text,
-                    title=task_title,
-                    available_repos=available_repos
-                )
-                logger.info(
-                    f"[{trace_id}][Tasks Intent] Type: {intent.task_type.value} | TargetRepo: {intent.target_repo} | Summary: {intent.summary}"
-                )
-
-                self._update_status(
-                    f"# ⏳ [0-Tap Tasks 처리 중] {task_title}\n\n"
-                    f"- 시각: {now_str}\n"
-                    f"- 대상: {intent.target_repo}\n"
-                    f"- 작업 유형: {intent.task_type.value}\n"
-                    f"- 요약: {intent.summary}"
-                )
-
-                repo_path = self.repo_manager.prepare_repo(intent.target_repo)
-
-                if intent.task_type == TaskType.READ:
-                    rep_folder = self.storage_manager.get_destination_folder("reports") if self.storage_manager else self.folder_id
-                    doc_title = self.storage_manager.format_mobile_title(TaskType.READ, intent.target_repo, intent.summary) if self.storage_manager else task_title
-                    result = self.read_executor.execute(repo_path, intent, original_title=doc_title, parent_id=rep_folder)
-                    output_str = (
-                        f"### 📄 [0-Tap Tasks 분석 보고서 요약]\n"
-                        f"- 대상 저장소: `{intent.target_repo}`\n"
-                        f"- 분석 주제: **{intent.summary}**\n\n"
-                        f"{result.get('preview', '')}\n\n"
-                        f"*(전체 보고서는 Google Drive의 `{result.get('doc_name')}` 문서에 저장되었습니다.)*"
+                try:
+                    # Analyze intent using IntentAnalyzer
+                    available_repos = list(self.repo_manager.repo_mapping.keys())
+                    intent = self.intent_analyzer.analyze(
+                        raw_text=full_task_text,
+                        title=task_title,
+                        available_repos=available_repos
                     )
-                    self._sync_task_result_to_console(
-                        output_str=output_str,
-                        action_status="READ_SUCCESS",
-                        action_message=f"[{intent.target_repo}] {intent.summary} 분석 완료",
-                        history_entry=f"- [{now_str[5:16]}] [📄 Tasks분석] {intent.summary} (#{trace_id[-4:]})",
-                        trace_id=trace_id,
+                    logger.info(
+                        f"[{trace_id}][Tasks Intent] Type: {intent.task_type.value} | TargetRepo: {intent.target_repo} | Summary: {intent.summary}"
                     )
-                    self.tasks_manager.complete_task(
+
+                    self._update_status(
+                        f"# ⏳ [0-Tap Tasks 처리 중] {task_title}\n\n"
+                        f"- 시각: {now_str}\n"
+                        f"- 대상: {intent.target_repo}\n"
+                        f"- 작업 유형: {intent.task_type.value}\n"
+                        f"- 요약: {intent.summary}"
+                    )
+
+                    repo_path = self.repo_manager.prepare_repo(intent.target_repo)
+
+                    if intent.task_type == TaskType.READ:
+                        rep_folder = self.storage_manager.get_destination_folder("reports") if self.storage_manager else self.folder_id
+                        doc_title = self.storage_manager.format_mobile_title(TaskType.READ, intent.target_repo, intent.summary) if self.storage_manager else task_title
+                        result = self.read_executor.execute(repo_path, intent, original_title=doc_title, parent_id=rep_folder)
+                        output_str = (
+                            f"### 📄 [0-Tap Tasks 분석 보고서 요약]\n"
+                            f"- 대상 저장소: `{intent.target_repo}`\n"
+                            f"- 분석 주제: **{intent.summary}**\n\n"
+                            f"{result.get('preview', '')}\n\n"
+                            f"*(전체 보고서는 Google Drive의 `{result.get('doc_name')}` 문서에 저장되었습니다.)*"
+                        )
+                        self._sync_task_result_to_console(
+                            output_str=output_str,
+                            action_status="READ_SUCCESS",
+                            action_message=f"[{intent.target_repo}] {intent.summary} 분석 완료",
+                            history_entry=f"- [{now_str[5:16]}] [📄 Tasks분석] {intent.summary} (#{trace_id[-4:]})",
+                            trace_id=trace_id,
+                        )
+
+                        report_text = result.get('report') or result.get('preview', '')
+                        clean_preview = report_text.replace("```", "").replace("###", "").replace("##", "").replace("#", "").strip()
+                        if len(clean_preview) > 2500:
+                            clean_preview = clean_preview[:2500] + "\n...(이하 생략)..."
+
+                        feedback_notes = (
+                            f"[분석 완료] {intent.target_repo}\n"
+                            f"주제: {intent.summary}\n\n"
+                            f"[보고서 요약]\n"
+                            f"{clean_preview}\n\n"
+                            f"[전체 보고서 안내]\n"
+                            f"Google Drive: {result.get('doc_name')}"
+                        )
+                        self.tasks_manager.update_task_with_feedback(
+                            task_id=task_id,
+                            is_success=True,
+                            title=task_title,
+                            feedback_notes=feedback_notes
+                        )
+
+                    elif intent.task_type == TaskType.WRITE:
+                        result = self.write_executor.execute(repo_path, intent)
+                        commit_folder = self.storage_manager.get_destination_folder("commits") if self.storage_manager else self.folder_id
+                        doc_title = self.storage_manager.format_mobile_title(TaskType.WRITE, intent.target_repo, result.get('commit_message') or intent.summary) if self.storage_manager else task_title
+                        self._create_completion_doc(doc_title, result, parent_id=commit_folder)
+                        output_str = (
+                            f"### 🟢 [0-Tap Tasks Git 반영 완료]\n"
+                            f"- 대상 저장소: `{intent.target_repo}`\n"
+                            f"- 변경 파일: `{result.get('target_path')}`\n"
+                            f"- 커밋 메시지: `{result.get('commit_message')}`\n"
+                            f"- 커밋 해시: `{result.get('commit_hash')}` (origin/main 푸시 완료)\n\n"
+                            f"#### 주요 변경 내용 (Diff)\n"
+                            f"```diff\n{result.get('diff') or '(신규 파일)'}\n```"
+                        )
+                        self._sync_task_result_to_console(
+                            output_str=output_str,
+                            action_status="COMMIT_SUCCESS",
+                            action_message=f"커밋 `{result.get('commit_hash', '')[:7]}` 완료 ({intent.target_repo})",
+                            history_entry=f"- [{now_str[5:16]}] [🟢 Tasks커밋] {result.get('commit_message')} (#{trace_id[-4:]})",
+                            trace_id=trace_id,
+                        )
+
+                        commit_hash = result.get('commit_hash', '')
+                        commit_hash_short = commit_hash[:7] if commit_hash else "local"
+                        diff_text = (result.get('diff') or '(신규 파일)').strip()
+                        if len(diff_text) > 1500:
+                            diff_text = diff_text[:1500] + "\n...(이하 diff 생략)..."
+
+                        feedback_notes = (
+                            f"[반영 완료] {intent.target_repo}\n"
+                            f"변경 파일: {result.get('target_path')}\n"
+                            f"커밋: {commit_hash_short} ({result.get('commit_message')})\n"
+                            f"상태: origin/main 푸시 완료\n\n"
+                            f"[변경 내용 (Diff)]\n"
+                            f"{diff_text}"
+                        )
+                        self.tasks_manager.update_task_with_feedback(
+                            task_id=task_id,
+                            is_success=True,
+                            title=task_title,
+                            feedback_notes=feedback_notes
+                        )
+
+                    elif intent.task_type == TaskType.EXEC:
+                        log_folder = self.storage_manager.get_destination_folder("logs") if self.storage_manager else self.folder_id
+                        doc_title = self.storage_manager.format_mobile_title(TaskType.EXEC, intent.target_repo, intent.summary or intent.exec_command) if self.storage_manager else task_title
+                        result = self.exec_executor.execute(repo_path, intent, original_title=doc_title, parent_id=log_folder)
+                        output_str = (
+                            f"### 💻 [0-Tap Tasks 명령 실행 완료]\n"
+                            f"- 대상 저장소: `{intent.target_repo}`\n"
+                            f"- 명령어: `{intent.exec_command}`\n"
+                            f"- 종료 코드: `{result.get('exit_code')}`\n\n"
+                            f"#### 실행 콘솔 출력\n"
+                            f"```text\n{(result.get('stdout', '') + chr(10) + result.get('stderr', '')).strip() or '(출력 없음)'}\n```"
+                        )
+                        self._sync_task_result_to_console(
+                            output_str=output_str,
+                            action_status="EXEC_SUCCESS" if result.get('exit_code') == 0 else "EXEC_ERROR",
+                            action_message=f"명령어 `{intent.exec_command}` 실행 완료 (code: {result.get('exit_code')})",
+                            history_entry=f"- [{now_str[5:16]}] [💻 Tasks실행] {intent.summary or intent.exec_command} (#{trace_id[-4:]})",
+                            trace_id=trace_id,
+                        )
+
+                        exit_code = result.get('exit_code')
+                        console_output = (result.get('stdout', '') + "\n" + result.get('stderr', '')).strip() or "(출력 없음)"
+                        if len(console_output) > 2000:
+                            console_output = console_output[:2000] + "\n...(이하 출력 생략)..."
+
+                        is_exec_ok = (exit_code == 0)
+                        feedback_notes = (
+                            f"[{'실행 성공' if is_exec_ok else '실행 오류'}] {intent.target_repo}\n"
+                            f"명령어: {intent.exec_command}\n"
+                            f"종료 코드: {exit_code}\n\n"
+                            f"[콘솔 출력]\n"
+                            f"{console_output}"
+                        )
+                        self.tasks_manager.update_task_with_feedback(
+                            task_id=task_id,
+                            is_success=is_exec_ok,
+                            title=task_title,
+                            feedback_notes=feedback_notes
+                        )
+
+                except Exception as task_err:
+                    logger.error(f"Failed to process Google Task '{task_id}': {task_err}", exc_info=True)
+                    error_feedback = (
+                        f"[실행 오류]\n"
+                        f"작업 처리 중 오류가 발생했습니다.\n\n"
+                        f"[오류 상세]\n"
+                        f"{str(task_err)}\n\n"
+                        f"[진단 및 해결 안내]\n"
+                        f"- 저장소 접근 권한(SSH 키) 또는 경로를 확인해 주세요.\n"
+                        f"- 요청 명령어 또는 파일 경로가 유효한지 확인해 주세요."
+                    )
+                    self.tasks_manager.update_task_with_feedback(
                         task_id=task_id,
-                        completion_notes=f"✅ [gem-bridge 완료] 분석 보고서 생성됨 ({result.get('doc_name')})"
-                    )
-
-                elif intent.task_type == TaskType.WRITE:
-                    result = self.write_executor.execute(repo_path, intent)
-                    commit_folder = self.storage_manager.get_destination_folder("commits") if self.storage_manager else self.folder_id
-                    doc_title = self.storage_manager.format_mobile_title(TaskType.WRITE, intent.target_repo, result.get('commit_message') or intent.summary) if self.storage_manager else task_title
-                    self._create_completion_doc(doc_title, result, parent_id=commit_folder)
-                    output_str = (
-                        f"### 🟢 [0-Tap Tasks Git 반영 완료]\n"
-                        f"- 대상 저장소: `{intent.target_repo}`\n"
-                        f"- 변경 파일: `{result.get('target_path')}`\n"
-                        f"- 커밋 메시지: `{result.get('commit_message')}`\n"
-                        f"- 커밋 해시: `{result.get('commit_hash')}` (origin/main 푸시 완료)\n\n"
-                        f"#### 주요 변경 내용 (Diff)\n"
-                        f"```diff\n{result.get('diff') or '(신규 파일)'}\n```"
-                    )
-                    self._sync_task_result_to_console(
-                        output_str=output_str,
-                        action_status="COMMIT_SUCCESS",
-                        action_message=f"커밋 `{result.get('commit_hash', '')[:7]}` 완료 ({intent.target_repo})",
-                        history_entry=f"- [{now_str[5:16]}] [🟢 Tasks커밋] {result.get('commit_message')} (#{trace_id[-4:]})",
-                        trace_id=trace_id,
-                    )
-                    self.tasks_manager.complete_task(
-                        task_id=task_id,
-                        completion_notes=f"✅ [gem-bridge 완료] 커밋: {result.get('commit_hash', '')[:7]} - {result.get('commit_message')}"
-                    )
-
-                elif intent.task_type == TaskType.EXEC:
-                    log_folder = self.storage_manager.get_destination_folder("logs") if self.storage_manager else self.folder_id
-                    doc_title = self.storage_manager.format_mobile_title(TaskType.EXEC, intent.target_repo, intent.summary or intent.exec_command) if self.storage_manager else task_title
-                    result = self.exec_executor.execute(repo_path, intent, original_title=doc_title, parent_id=log_folder)
-                    output_str = (
-                        f"### 💻 [0-Tap Tasks 명령 실행 완료]\n"
-                        f"- 대상 저장소: `{intent.target_repo}`\n"
-                        f"- 명령어: `{intent.exec_command}`\n"
-                        f"- 종료 코드: `{result.get('exit_code')}`\n\n"
-                        f"#### 실행 콘솔 출력\n"
-                        f"```text\n{(result.get('stdout', '') + chr(10) + result.get('stderr', '')).strip() or '(출력 없음)'}\n```"
-                    )
-                    self._sync_task_result_to_console(
-                        output_str=output_str,
-                        action_status="EXEC_SUCCESS" if result.get('exit_code') == 0 else "EXEC_ERROR",
-                        action_message=f"명령어 `{intent.exec_command}` 실행 완료 (code: {result.get('exit_code')})",
-                        history_entry=f"- [{now_str[5:16]}] [💻 Tasks실행] {intent.summary or intent.exec_command} (#{trace_id[-4:]})",
-                        trace_id=trace_id,
-                    )
-                    self.tasks_manager.complete_task(
-                        task_id=task_id,
-                        completion_notes=f"✅ [gem-bridge 완료] 종료 코드: {result.get('exit_code')}"
+                        is_success=False,
+                        title=task_title,
+                        feedback_notes=error_feedback
                     )
 
         except Exception as e:
@@ -1190,14 +1258,22 @@ class GemBridgeDaemonV2:
             self._update_console_heartbeat()
             self._last_heartbeat_time = time.time()
 
-        # 3. Periodic background janitor cleanup (every 6 hours)
-        if self.janitor and (time.time() - self._last_janitor_run_time > 21600):
-            try:
-                logger.info("[Janitor] Starting scheduled background cleanup cycle...")
-                self.janitor.clean_expired_documents()
-                self._last_janitor_run_time = time.time()
-            except Exception as e:
-                logger.warning(f"[Janitor] Scheduled cleanup error: {e}")
+        # 3. Periodic background janitor cleanup and task archiving (every 6 hours)
+        if time.time() - self._last_janitor_run_time > 21600:
+            if self.janitor:
+                try:
+                    logger.info("[Janitor] Starting scheduled background cleanup cycle...")
+                    self.janitor.clean_expired_documents()
+                except Exception as e:
+                    logger.warning(f"[Janitor] Scheduled cleanup error: {e}")
+            if self.tasks_manager and self.tasks_manager.is_available:
+                try:
+                    archived = self.tasks_manager.archive_stale_tasks(max_age_hours=24)
+                    if archived > 0:
+                        logger.info(f"[Google Tasks] Auto-archived {archived} stale completed tasks.")
+                except Exception as t_err:
+                    logger.warning(f"[Google Tasks] Stale archiving error: {t_err}")
+            self._last_janitor_run_time = time.time()
 
         # 4. Check Google Tasks for 0-Tap mobile tasks
         self.check_and_process_google_tasks()

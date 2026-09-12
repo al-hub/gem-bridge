@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.10] - 2026-09-12
+
+### Added
+- **Deepened Google Tasks Autonomous Feedback Channel (`core/google_tasks.py`, `daemon_v2.py`)**:
+  - Implemented `update_task_with_feedback()` retaining `status='needsAction'` while updating titles with `[✅완료]` or `[❌오류]`, allowing mobile Gemini to immediately query and brief completed tasks without requiring `showCompleted=True`.
+  - Added Anti-Reexecution Double Guard: `list_pending_tasks()` automatically ignores tasks starting with `("[✅완료]", "[❌오류]", "[⏳진행]")`, backed by in-memory `processed_task_ids`.
+  - Rich Plain-Text Notes formatting: structured output (no confusing raw markdown fences) capped at 8,000 characters for READ (architecture, file previews, Google Drive report link), WRITE (commit hash, target file, diff snippet), and EXEC (exit code, console stdout/stderr).
+  - Robust per-task exception handling ensuring errors result in actionable `[❌오류]` diagnosis in Google Tasks.
+  - Automated Task Lifecycle Management: `archive_stale_tasks()` automatically transitions completed/error tasks older than 24 hours to `completed` status during the 6-hour periodic janitor cycle.
+  - Expanded unit test suite to 73 tests covering prefix filtering, rich feedback updates, stale archiving, and daemon task processing (100% passing).
+
+---
+
 ## [2.1.9] - 2026-09-12
 
 ### Changed

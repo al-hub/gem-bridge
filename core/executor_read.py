@@ -66,7 +66,8 @@ class ReadExecutor:
             "doc_id": doc_id,
             "doc_name": doc_name,
             "repo_path": str(repo_path),
-            "preview": report_content[:200]
+            "preview": report_content[:500],
+            "report": report_content
         }
 
     def _gather_repo_context(
