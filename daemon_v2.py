@@ -239,16 +239,22 @@ class GemBridgeDaemonV2:
                     cmd = ConsoleProtocolParser.extract_command(raw_content) or DEFAULT_PLACEHOLDER
                     history = ConsoleProtocolParser.extract_history(raw_content)
 
-                    # Startup crash self-healing: if stuck in PROCESSING, recover to ONLINE
-                    recovered_msg = "*(PC 데몬이 정상 가동되었습니다. 아래 입력창에 작업을 입력하세요.)*"
-                    if "PROCESSING" in raw_content:
-                        logger.info("Auto-healing: Resetting previous zombie PROCESSING state to ONLINE.")
-                        recovered_msg = "*(시스템 재부팅: 이전 비정상 종료된 작업이 정리되고 ONLINE으로 자동 복구되었습니다.)*"
+                    # Startup self-healing and output preservation
+                    output = "*(PC 데몬이 정상 가동되었습니다. 아래 입력창에 작업을 입력하세요.)*"
+                    if OUTPUT_SECTION_HEADER in raw_content:
+                        parts = raw_content.split(OUTPUT_SECTION_HEADER, 1)[1]
+                        if "════" in parts:
+                            extracted = parts.split("════", 1)[0].strip()
+                            if "PROCESSING" in raw_content:
+                                logger.info("Auto-healing: Resetting previous zombie PROCESSING state to ONLINE.")
+                                output = "*(시스템 재부팅: 이전 비정상 종료된 작업이 정리되고 ONLINE으로 자동 복구되었습니다.)*"
+                            elif extracted:
+                                output = extracted
 
                     online_text = ConsoleDocFormatter.render(
                         status="ONLINE",
                         input_command=cmd,
-                        output_content=recovered_msg,
+                        output_content=output,
                         history_items=history
                     )
                     self._write_console_content(online_text)
