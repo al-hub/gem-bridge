@@ -93,22 +93,25 @@ class WriteExecutor:
 [기존 파일 내용]
 {original_text}
 """
-        models_to_try = ["gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-3.5-flash"]
+        models_to_try = [
+            "gemini-3.8-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+        ]
         response = None
         for model_name in models_to_try:
-            for attempt in range(2):
-                try:
-                    response = self.gemini_client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                    )
-                    if response and response.text:
-                        break
-                except Exception as e:
-                    logger.warning(f"Synthesis failed with {model_name} (attempt {attempt + 1}): {e}")
-                    time.sleep(1)
-            if response and response.text:
-                break
+            try:
+                logger.info(f"Attempting code synthesis with {model_name}...")
+                response = self.gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                )
+                if response and response.text:
+                    logger.info(f"Code synthesis successfully completed using {model_name}.")
+                    break
+            except Exception as e:
+                logger.warning(f"Synthesis failed with {model_name}: {e}")
 
         if not response or not response.text:
             logger.error("All models failed during code synthesis. Falling back to original text.")

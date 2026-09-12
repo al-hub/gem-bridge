@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -191,19 +192,33 @@ class ReadExecutor:
 3. 코드 발췌문(Snippet)이 필요할 경우 파일 경로와 함께 정확한 코드 블록을 제공하세요.
 4. 절대 가상의 내용을 지어내지 말고, 제공된 컨텍스트에 기반하여 정확하게 설명하세요.
 """
-        try:
-            response = self.gemini_client.models.generate_content(
-                model=self.model_name,
-                contents=prompt
-            )
-            return response.text.strip()
-        except Exception as e:
-            logger.error(f"Error calling Gemini for report generation: {e}")
-            return f"""# [보고서] {user_query}
+        deep_chain = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]
+        default_chain = [self.model_name, "gemini-3.5-flash"]
+        is_deep = getattr(intent, "model_tier", "default") == "deep"
+        models_to_try = deep_chain if is_deep else default_chain
+
+        response = None
+        last_error = None
+        for model_name in models_to_try:
+            try:
+                logger.info(f"[READ Executor] Generating report with {model_name} (tier: {getattr(intent, 'model_tier', 'default')})...")
+                response = self.gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt
+                )
+                if response and response.text:
+                    logger.info(f"[READ Executor] Successfully generated report using {model_name}.")
+                    return response.text.strip()
+            except Exception as e:
+                last_error = e
+                logger.warning(f"[READ Executor] Report generation with {model_name} failed: {e}")
+
+        logger.error(f"All models failed for report generation. Last error: {last_error}")
+        return f"""# [보고서] {user_query}
 
 ## 1. 개요 및 분석 실패 안내
-Gemini 모델({self.model_name}) 호출 중 오류가 발생하여 자동 생성 보고서를 완성하지 못했습니다.
-- 에러 원인: {e}
+Gemini 모델 호출 중 오류가 발생하여 자동 생성 보고서를 완성하지 못했습니다.
+- 에러 원인: {last_error}
 
 ## 2. 수집된 저장소 컨텍스트 요약
 {repo_context[:3000]}

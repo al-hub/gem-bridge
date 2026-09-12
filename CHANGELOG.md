@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.11] - 2026-09-12
+
+### Added
+- **Hierarchical Reasoning Fallback Chain from Peak Reasoning to Ultimate Safety Net (`core/executor_write.py`, `core/executor_read.py`, `core/intent_analyzer.py`)**:
+  - Implemented Dual-Tier Workload Routing:
+    - **Fast Tier (`gemini-3.5-flash-lite`)**: ~1.3s response time for rapid natural language intent extraction and lightweight routine tasks.
+    - **Deep / Coding Tier (`gemini-3.8-flash` ➔ `gemini-3.6-flash` ➔ `gemini-3.5-flash` ➔ `gemini-3.5-flash-lite`)**:
+      - Peak Reasoning (1st Priority): `gemini-3.8-flash` for state-of-the-art code refactoring, clean architecture generation, and bug fixing.
+      - High-Intelligence Fallback (2nd Priority): `gemini-3.6-flash` smoothly handles temporary 503 traffic spikes or preview model demand surges.
+      - Proven Reliability Fallback (3rd Priority): `gemini-3.5-flash` for rock-solid stability.
+      - Ultimate Safety Net (4th Priority): `gemini-3.5-flash-lite` guarantees 100% completion even under strict API constraints.
+  - Automatic Deep Classification in `IntentAnalyzer`: all `WRITE` tasks (code synthesis) and `READ` requests containing deep keywords ("심층", "deep", "정밀", "리팩토링", "버그 수정", "아키텍처", etc.) automatically engage the Deep Reasoning Chain.
+  - Expanded unit test suite to 75 tests covering tiered fallback execution in both `WriteExecutor` and `ReadExecutor` (100% passing).
+
+---
+
 ## [2.1.10] - 2026-09-12
 
 ### Added

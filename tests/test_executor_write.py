@@ -135,6 +135,31 @@ class TestExecutorWrite(unittest.TestCase):
         self.assertIn("+def add(a, b): return a + b", result["diff"])
 
 
+    def test_synthesize_code_tiered_fallback(self):
+        mock_gemini = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "def add(a, b): return a + b\n"
+
+        # 3.8-flash fails with 503, 3.6-flash succeeds
+        mock_gemini.models.generate_content.side_effect = [
+            RuntimeError("503 UNAVAILABLE"),
+            mock_response
+        ]
+
+        executor = WriteExecutor(gemini_client=mock_gemini)
+        synthesized = executor.synthesize_code(
+            original_text="def add(a, b): return a - b\n",
+            instruction="Fix bug in add function",
+            target_path="calc.py"
+        )
+        self.assertEqual(synthesized, "def add(a, b): return a + b\n")
+        self.assertEqual(mock_gemini.models.generate_content.call_count, 2)
+        first_call = mock_gemini.models.generate_content.call_args_list[0][1]
+        second_call = mock_gemini.models.generate_content.call_args_list[1][1]
+        self.assertEqual(first_call["model"], "gemini-3.8-flash")
+        self.assertEqual(second_call["model"], "gemini-3.6-flash")
+
+
 if __name__ == "__main__":
     unittest.main()
 

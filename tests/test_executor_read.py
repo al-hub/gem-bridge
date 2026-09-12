@@ -65,6 +65,32 @@ class TestExecutorRead(unittest.TestCase):
         self.assertEqual(self.executor._clean_doc_title("!read codebase"), "codebase")
         self.assertEqual(self.executor._clean_doc_title("[보고서] 이미 있는 제목"), "이미 있는 제목")
 
+    def test_generate_report_deep_tier_fallback(self):
+        intent = IntentAnalysisResult(
+            task_type=TaskType.READ,
+            target_repo="test-repo",
+            summary="심층 아키텍처 분석",
+            query="심층 구조 분석해줘",
+            model_tier="deep"
+        )
+        mock_response = MagicMock()
+        mock_response.text = "# [보고서] 심층 분석 결과\n상세 내용."
+
+        # 3.8-flash fails, 3.6-flash succeeds
+        self.mock_gemini.models.generate_content.side_effect = [
+            RuntimeError("503 UNAVAILABLE"),
+            mock_response
+        ]
+
+        result = self.executor.execute(self.repo_dir, intent, original_title="!분석 test-repo")
+        self.assertEqual(result["status"], "success")
+        self.assertIn("심층 분석 결과", result["report"])
+        self.assertEqual(self.mock_gemini.models.generate_content.call_count, 2)
+        first_call = self.mock_gemini.models.generate_content.call_args_list[0][1]
+        second_call = self.mock_gemini.models.generate_content.call_args_list[1][1]
+        self.assertEqual(first_call["model"], "gemini-3.8-flash")
+        self.assertEqual(second_call["model"], "gemini-3.6-flash")
+
 
 if __name__ == "__main__":
     unittest.main()

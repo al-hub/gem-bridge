@@ -62,6 +62,10 @@ class IntentAnalysisResult(BaseModel):
         None,
         description="Shell command to execute for EXEC tasks"
     )
+    model_tier: str = Field(
+        default="default",
+        description="Model tier: 'default' for standard fast tasks, 'deep' for code edits, refactoring, or deep architecture analysis"
+    )
     reasoning: Optional[str] = Field(
         None,
         description="Reasoning behind task type selection and extracted fields"
@@ -257,6 +261,7 @@ class IntentAnalyzer:
                 target_path=target_path,
                 content=content,
                 commit_message=commit_msg,
+                model_tier="deep",
                 reasoning="Direct JSON payload provided with target_path and content."
             )
 
@@ -365,6 +370,14 @@ class IntentAnalyzer:
         # Target repo fallback
         if not result.target_repo or result.target_repo.strip() == "":
             result.target_repo = self.default_repo
+
+        # Automatically determine model tier
+        deep_keywords = ["심층", "deep", "정밀", "취약점", "개선점", "리팩토링", "refactor", "아키텍처", "설계", "버그", "오류", "고쳐"]
+        is_deep_request = any(kw in full_text.lower() for kw in deep_keywords)
+        if result.task_type == TaskType.WRITE or is_deep_request:
+            result.model_tier = "deep"
+        else:
+            result.model_tier = "default"
 
         return result
 
