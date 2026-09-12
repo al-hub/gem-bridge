@@ -76,7 +76,7 @@ class TestExecutorRead(unittest.TestCase):
         mock_response = MagicMock()
         mock_response.text = "# [보고서] 심층 분석 결과\n상세 내용."
 
-        # 3.8-flash fails, 3.6-flash succeeds
+        # 3.8-flash fails, 3.7-flash succeeds
         self.mock_gemini.models.generate_content.side_effect = [
             RuntimeError("503 UNAVAILABLE"),
             mock_response
@@ -89,7 +89,11 @@ class TestExecutorRead(unittest.TestCase):
         first_call = self.mock_gemini.models.generate_content.call_args_list[0][1]
         second_call = self.mock_gemini.models.generate_content.call_args_list[1][1]
         self.assertEqual(first_call["model"], "gemini-3.8-flash")
-        self.assertEqual(second_call["model"], "gemini-3.6-flash")
+        self.assertIsNotNone(first_call.get("config"))
+        self.assertEqual(first_call["config"].thinking_config.thinking_budget, 0)
+        self.assertEqual(second_call["model"], "gemini-3.7-flash")
+        self.assertIsNotNone(second_call.get("config"))
+        self.assertEqual(second_call["config"].thinking_config.thinking_budget, 0)
 
 
 if __name__ == "__main__":

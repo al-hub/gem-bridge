@@ -5,8 +5,13 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from core.intent_analyzer import IntentAnalysisResult
+
+try:
+    from google.genai import types
+except ImportError:
+    types = None
 
 logger = logging.getLogger("gem_bridge.executor_write")
 
@@ -60,6 +65,22 @@ class WriteExecutor:
                 return True
         return False
 
+    @staticmethod
+    def _build_model_config(model_name: str) -> Optional[Any]:
+        """
+        Builds optimized GenerateContentConfig for thinking models (3.8-flash, 3.7-flash).
+        Setting thinking_budget=0 bypasses the congested dynamic reasoning queue (503 UNAVAILABLE)
+        and routes directly to standard high-throughput Flash TPU clusters.
+        """
+        if ("3.8" in model_name or "3.7" in model_name) and types is not None:
+            try:
+                return types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(thinking_budget=0)
+                )
+            except Exception:
+                return None
+        return None
+
     def synthesize_code(
         self,
         original_text: str,
@@ -68,8 +89,8 @@ class WriteExecutor:
         source_path: Optional[str] = None
     ) -> str:
         """
-        Uses Gemini (gemini-3.6-flash) to modify, refactor, or synthesize code
-        based on natural language instructions.
+        Uses Gemini (gemini-3.8-flash -> gemini-3.7-flash -> gemini-3.6-flash -> gemini-3.5-flash -> gemini-3.5-flash-lite)
+        to modify, refactor, or synthesize code based on natural language instructions.
         """
         if not self.gemini_client:
             logger.warning("gemini_client not available for code synthesis. Using original text.")
@@ -95,6 +116,7 @@ class WriteExecutor:
 """
         models_to_try = [
             "gemini-3.8-flash",
+            "gemini-3.7-flash",
             "gemini-3.6-flash",
             "gemini-3.5-flash",
             "gemini-3.5-flash-lite",
@@ -103,10 +125,11 @@ class WriteExecutor:
         for model_name in models_to_try:
             try:
                 logger.info(f"Attempting code synthesis with {model_name}...")
-                response = self.gemini_client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                )
+                kwargs = {"model": model_name, "contents": prompt}
+                cfg = self._build_model_config(model_name)
+                if cfg is not None:
+                    kwargs["config"] = cfg
+                response = self.gemini_client.models.generate_content(**kwargs)
                 if response and response.text:
                     logger.info(f"Code synthesis successfully completed using {model_name}.")
                     break

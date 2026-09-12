@@ -140,7 +140,7 @@ class TestExecutorWrite(unittest.TestCase):
         mock_response = MagicMock()
         mock_response.text = "def add(a, b): return a + b\n"
 
-        # 3.8-flash fails with 503, 3.6-flash succeeds
+        # 3.8-flash fails with 503, 3.7-flash succeeds
         mock_gemini.models.generate_content.side_effect = [
             RuntimeError("503 UNAVAILABLE"),
             mock_response
@@ -157,7 +157,30 @@ class TestExecutorWrite(unittest.TestCase):
         first_call = mock_gemini.models.generate_content.call_args_list[0][1]
         second_call = mock_gemini.models.generate_content.call_args_list[1][1]
         self.assertEqual(first_call["model"], "gemini-3.8-flash")
-        self.assertEqual(second_call["model"], "gemini-3.6-flash")
+        self.assertIsNotNone(first_call.get("config"))
+        self.assertEqual(first_call["config"].thinking_config.thinking_budget, 0)
+        self.assertEqual(second_call["model"], "gemini-3.7-flash")
+        self.assertIsNotNone(second_call.get("config"))
+        self.assertEqual(second_call["config"].thinking_config.thinking_budget, 0)
+
+    def test_synthesize_code_38_flash_passes_thinking_budget_zero(self):
+        mock_gemini = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "def add(a, b): return a + b\n"
+        mock_gemini.models.generate_content.return_value = mock_response
+
+        executor = WriteExecutor(gemini_client=mock_gemini)
+        synthesized = executor.synthesize_code(
+            original_text="def add(a, b): return a - b\n",
+            instruction="Fix bug in add function",
+            target_path="calc.py"
+        )
+        self.assertEqual(synthesized, "def add(a, b): return a + b\n")
+        self.assertEqual(mock_gemini.models.generate_content.call_count, 1)
+        first_call = mock_gemini.models.generate_content.call_args_list[0][1]
+        self.assertEqual(first_call["model"], "gemini-3.8-flash")
+        self.assertIsNotNone(first_call.get("config"))
+        self.assertEqual(first_call["config"].thinking_config.thinking_budget, 0)
 
 
 if __name__ == "__main__":

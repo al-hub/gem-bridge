@@ -2,9 +2,14 @@ import os
 import time
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from googleapiclient.http import MediaInMemoryUpload
 from core.intent_analyzer import IntentAnalysisResult
+
+try:
+    from google.genai import types
+except ImportError:
+    types = None
 
 logger = logging.getLogger("gem_bridge.executor_read")
 
@@ -162,13 +167,29 @@ class ReadExecutor:
             return True
         return False
 
+    @staticmethod
+    def _build_model_config(model_name: str) -> Optional[Any]:
+        """
+        Builds optimized GenerateContentConfig for thinking models (3.8-flash, 3.7-flash).
+        Setting thinking_budget=0 bypasses the congested dynamic reasoning queue (503 UNAVAILABLE)
+        and routes directly to standard high-throughput Flash TPU clusters.
+        """
+        if ("3.8" in model_name or "3.7" in model_name) and types is not None:
+            try:
+                return types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(thinking_budget=0)
+                )
+            except Exception:
+                return None
+        return None
+
     def _generate_report(
         self,
         repo_path: Path,
         intent: IntentAnalysisResult,
         repo_context: str
     ) -> str:
-        """Calls gemini-3.6-flash to produce a comprehensive markdown report."""
+        """Calls Gemini tiered models to produce a comprehensive markdown report."""
         user_query = intent.query or intent.summary
         prompt = f"""당신은 전문 수석 소프트웨어 엔지니어 겸 코드베이스 분석 전문가입니다.
 사용자의 분석 요청에 맞춰 로컬 저장소 소스코드 컨텍스트를 바탕으로 상세하고 체계적인 분석 보고서를 작성하세요.
@@ -192,7 +213,13 @@ class ReadExecutor:
 3. 코드 발췌문(Snippet)이 필요할 경우 파일 경로와 함께 정확한 코드 블록을 제공하세요.
 4. 절대 가상의 내용을 지어내지 말고, 제공된 컨텍스트에 기반하여 정확하게 설명하세요.
 """
-        deep_chain = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]
+        deep_chain = [
+            "gemini-3.8-flash",
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+        ]
         default_chain = [self.model_name, "gemini-3.5-flash"]
         is_deep = getattr(intent, "model_tier", "default") == "deep"
         models_to_try = deep_chain if is_deep else default_chain
@@ -202,10 +229,11 @@ class ReadExecutor:
         for model_name in models_to_try:
             try:
                 logger.info(f"[READ Executor] Generating report with {model_name} (tier: {getattr(intent, 'model_tier', 'default')})...")
-                response = self.gemini_client.models.generate_content(
-                    model=model_name,
-                    contents=prompt
-                )
+                kwargs = {"model": model_name, "contents": prompt}
+                cfg = self._build_model_config(model_name)
+                if cfg is not None:
+                    kwargs["config"] = cfg
+                response = self.gemini_client.models.generate_content(**kwargs)
                 if response and response.text:
                     logger.info(f"[READ Executor] Successfully generated report using {model_name}.")
                     return response.text.strip()

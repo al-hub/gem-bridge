@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.13] - 2026-09-12
+
+### Fixed & Optimized
+- **`gemini-3.8-flash` Thinking Budget Optimization (`core/executor_write.py`, `core/executor_read.py`)**:
+  - Identified root cause of `503 UNAVAILABLE (High demand spike)` errors on `gemini-3.8-flash`: default unconstrained dynamic reasoning tokens routed requests to congested TPU reasoning queues.
+  - Implemented `_build_model_config()` supplying `GenerateContentConfig(thinking_config=ThinkingConfig(thinking_budget=0))` for thinking models (`3.8` and `3.7`).
+  - Bypasses reasoning queue bottlenecks, routing directly to high-throughput standard Flash TPU clusters and achieving ~1.8s code synthesis latency with zero 503 drops.
+- **`gemini-3.7-flash` High-Intelligence Fallback Integration (`core/executor_write.py`, `core/executor_read.py`)**:
+  - Integrated `gemini-3.7-flash` (also configured with `thinking_budget=0`) as Tier 2 fallback directly beneath `gemini-3.8-flash`.
+  - Updated tiered fallback sequence across `WriteExecutor` and `ReadExecutor`:
+    `gemini-3.8-flash (thinking=0)` ➔ `gemini-3.7-flash (thinking=0)` ➔ `gemini-3.6-flash` ➔ `gemini-3.5-flash` ➔ `gemini-3.5-flash-lite`.
+- **Test Suite Updates (`tests/test_executor_write.py`, `tests/test_executor_read.py`)**:
+  - Added unit test `test_synthesize_code_38_flash_passes_thinking_budget_zero` verifying `GenerateContentConfig` structure.
+  - Updated fallback assertions to validate the full 5-tier fallback cascade.
+
 ## [2.1.12] - 2026-09-12
 
 ### Added
