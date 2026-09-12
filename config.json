@@ -1,9 +1,0 @@
-{
-  "bridge_dir": "/mnt/g/내 드라이브/GeminiBridge",
-  "poll_interval_seconds": 3,
-  "repositories": {
-    "kum": "/home/al-hub/kum",
-    "tetris-loop": "/home/al-hub/tetris-loop",
-    "gem-bridge": "/home/al-hub/workspace/gem-bridge"
-  }
-}
