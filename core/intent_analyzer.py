@@ -75,7 +75,7 @@ class IntentAnalyzer:
     Default task type is strictly READ.
     """
 
-    MODEL_NAME = "gemini-flash-latest"
+    MODEL_NAME = "gemini-3.5-flash-lite"
 
     def __init__(self, api_key: str, default_repo: str = "gem-bridge"):
         self.api_key = api_key

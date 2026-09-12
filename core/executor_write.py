@@ -3,6 +3,7 @@ import fnmatch
 import logging
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 from core.intent_analyzer import IntentAnalysisResult
@@ -92,7 +93,7 @@ class WriteExecutor:
 [기존 파일 내용]
 {original_text}
 """
-        models_to_try = ["gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-3.5-flash"]
+        models_to_try = ["gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-3.5-flash"]
         response = None
         for model_name in models_to_try:
             for attempt in range(2):
