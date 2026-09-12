@@ -16,7 +16,7 @@ class ReadExecutor:
     and returns results by creating a new Google Doc ('[보고서] ...') via Google Drive API.
     """
 
-    DEFAULT_MODEL = "gemini-3.6-flash"
+    DEFAULT_MODEL = "gemini-flash-latest"
     IGNORED_DIRS = {
         ".git", "__pycache__", "node_modules", ".venv", "venv", ".idea", ".vscode", ".agents"
     }

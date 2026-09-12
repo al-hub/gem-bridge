@@ -68,8 +68,8 @@ class GemBridgeDaemonV2:
     determines intent, dynamically prepares repositories, and dispatches to executors.
     """
 
-    SYSTEM_DOC_PREFIXES = ["[보고서]", "[완료]", "[오류]", "[실행결과]", "STATUS", "CONSOLE"]
-    TRIGGER_KEYWORDS = ["!", "깃", "task", "작업", "분석", "실행", "gem-bridge", "보고서"]
+    SYSTEM_DOC_PREFIXES = ["[보고서]", "[완료]", "[오류]", "[실행결과]"]
+    TRIGGER_KEYWORDS = ["!", "깃", "task", "작업", "분석", "실행", "gem-bridge", "보고서", "console"]
 
     def __init__(self, config: Optional[dict] = None):
         self.config = config or load_config()
@@ -554,8 +554,11 @@ class GemBridgeDaemonV2:
             file_id = f["id"]
             file_name = f.get("name", "")
 
-            # Exclude special system docs by ID or name
+            # Exclude special system docs by ID or exact name
             if file_id == self.console_doc_id or file_id == self.status_doc_id:
+                continue
+
+            if file_name in ("CONSOLE", "STATUS"):
                 continue
 
             if any(file_name.startswith(p) for p in self.SYSTEM_DOC_PREFIXES):

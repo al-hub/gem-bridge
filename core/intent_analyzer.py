@@ -71,11 +71,11 @@ class IntentAnalysisResult(BaseModel):
 class IntentAnalyzer:
     """
     Parses natural language instructions and explicit commands (!분석, !작업, !실행)
-    using gemini-3.6-flash with structured JSON schema enforcement.
+    using gemini-flash-latest with structured JSON schema enforcement.
     Default task type is strictly READ.
     """
 
-    MODEL_NAME = "gemini-3.6-flash"
+    MODEL_NAME = "gemini-flash-latest"
 
     def __init__(self, api_key: str, default_repo: str = "gem-bridge"):
         self.api_key = api_key
@@ -316,23 +316,32 @@ class IntentAnalyzer:
             temperature=0.1,
         )
 
-        max_retries = 2
+        models_to_try = [self.MODEL_NAME, "gemini-3.5-flash-lite", "gemini-3.5-flash"]
         response = None
-        for attempt in range(max_retries + 1):
-            try:
-                response = self.client.models.generate_content(
-                    model=self.MODEL_NAME,
-                    contents=prompt,
-                    config=config,
-                )
+        last_err = None
+        for model_name in models_to_try:
+            for attempt in range(2):
+                try:
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=config,
+                    )
+                    if response and response.text:
+                        break
+                except Exception as e:
+                    last_err = e
+                    err_msg = str(e)
+                    if "503" in err_msg or "429" in err_msg or "UNAVAILABLE" in err_msg:
+                        logger.warning(f"Gemini API error with {model_name} ({e}), retrying in 1s...")
+                        time.sleep(1)
+                    else:
+                        break
+            if response and response.text:
                 break
-            except Exception as e:
-                err_msg = str(e)
-                if ("503" in err_msg or "429" in err_msg or "UNAVAILABLE" in err_msg) and attempt < max_retries:
-                    logger.warning(f"Gemini API temporary error ({e}), retrying in {2 ** attempt}s...")
-                    time.sleep(2 ** attempt)
-                else:
-                    raise
+
+        if not response or not response.text:
+            raise last_err or RuntimeError("Failed to generate content across all models")
 
         raw_json_str = response.text.strip()
         result = IntentAnalysisResult.model_validate_json(raw_json_str)
