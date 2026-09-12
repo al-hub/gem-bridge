@@ -1,47 +1,25 @@
-# gem-bridge 상세 구축 가이드 및 트러블슈팅 (ARCHITECTURE.md)
+# GitHub 저장소 분석 요청: gem-bridge
 
-## 1. 목적
-스마트폰 Gemini 모바일에서 자연어 한 줄(`@Google Drive !`)로 WSL2를 거쳐 GitHub 원격 저장소에 자동 커밋/푸시하는 무인 파이프라인 구축.
+해당 문서는 `al-hub/gem-bridge` 저장소 분석을 위해 생성된 문서입니다.
 
----
+## 1. 리포지토리 접근 상태
 
-## 2. 접근 방식 비교
-* **로컬 동기화 폴더 직접 감시 시도**: `.gdoc`이 메타데이터 바로가기여서 본문 추출 실패.
-* **Google Drive API v3 채택**: `export_media(mimeType='text/plain')`로 원문 텍스트 온전히 다운로드.
+현재 외부 웹 접근 및 시스템 조회를 통해 확인한 결과, https://github.com/al-hub/gem-bridge 저장소는 비공개(Private) 상태이거나 삭제/이동되어 외부 도구를 통해 내용을 직접 불러올 수 없습니다.
 
----
+## 2. 분석을 위해 필요한 정보
 
-## 3. 최종 기술 스택
-* **운영체제 및 환경**: Windows 11 WSL2
-* **프로세스 관리**: systemd 상시 데몬 (5초 폴링)
-* **API 연동 및 인증**: Google Drive API v3 + OAuth 2.0 (`token.json`)
-* **자연어 처리 / 파서**: google-genai SDK (`gemini-3.8-flash` LLM 파서)
-* **버전 관리**: Git CLI
+해당 저장소의 상세 분석(기능, 아키텍처, 사용 스택, 실행 방법 등)을 진행하기 위해 아래 항목 중 일부를 복사하여 추가해 주시면 즉시 분석 내용을 업데이트할 수 있습니다:
 
----
+* **README.md 전문**: 프로젝트 목적, 설치 및 실행 가이드, 환경 설정
+* **디렉터리 구조**: 프로젝트 폴더 및 주요 파일 트리
+* **패키지/의존성 파일**: 예: `package.json`, `requirements.txt`, `go.mod`, `Cargo.toml` 등
+* **주요 소스 코드 파일**: 핵심 로직을 담당하는 진입점(entrypoint) 및 모듈 코드
 
-## 4. 재구축 단계 (Setup Guide)
-1. **WSL2 설정**: `/etc/wsl.conf`에 `[boot] systemd=true` 설정 후 PowerShell에서 `wsl --shutdown` 재부팅.
-2. **GCP 프로젝트 설정**: GCP 프로젝트 생성, Drive API 활성화, Desktop App OAuth 클라이언트 발급 (`credentials.json`).
-3. **사용자 등록**: OAuth 동의 화면 Test users에 계정 등록.
-4. **토큰 발급**: 수동 리다이렉트 URL 입력 방식으로 WSL에서 `token.json` 발급.
-5. **데몬 등록**: `config.json` 및 `/etc/systemd/system/gem-bridge.service` 등록 후 데몬 활성화.
+## 3. 분석 예정 항목
 
----
-
-## 5. 전체 트러블슈팅 내역
-
-| 문제 현상 | 해결 방안 |
+| 구분 | 분석 내용 |
 | --- | --- |
-| `.gdoc` 메타데이터 한계 | `export_media` 평문 다운로드로 해결. |
-| OAuth 403 `access_denied` | GCP 콘솔 Test users 등록으로 해결. |
-| WSL2 브라우저 리다이렉트 간섭/PKCE 오류 | 터미널 수동 URL 입력으로 해결. |
-| systemd 미지원(PID 1) | `wsl.conf` 설정 후 재기동으로 해결. |
-| Drive API 쿼리 특수문자 누락 | API 단독 contains '!' 대신 최근 문서 가져와 Python 단에서 `!`, `깃`, `task`, `작업` 키워드 직접 검사로 해결. |
-| LLM 모델 지원 종료(404) | `gemini-2.5-flash`에서 `gemini-3.8-flash`로 갱신하여 해결. |
-| 수동 JSON 입력 불편 | LLM(Gemini Flash) 파서를 데몬에 내장해 순수 자연어 지원. |
-
----
-
-## 6. 동작 흐름
-모바일 프롬프트 → Drive 문서 생성 → 데몬 5초 감지 → LLM 파싱 → Git 커밋/푸시 → Drive 문서 휴지통 자동 이동.
+| 프로젝트 개요 | 저장소 목적 및 주요 기능 정의 |
+| 기술 스택 | 사용 언어, 프레임워크, 라이브러리 및 런타임 환경 |
+| 시스템 아키텍처 | 핵심 컴포넌트 간 데이터 흐름 및 상호작용 방식 |
+| 배포 및 설정 | 환경 변수, 컨테이너화(Docker) 및 실행 절차 |
