@@ -5,83 +5,260 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>gem-bridge 공식 문서</title>
   <style>
-    :root { --primary: #2563eb; --bg: #f8fafc; --card: #ffffff; --text: #1e293b; --text-muted: #64748b; --border: #e2e8f0; }
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #1e293b;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --code-bg: #0f172a;
+      --code-text: #e2e8f0;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
-    header { background: var(--card); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; }
-    .nav-container { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; height: 60px; display: flex; align-items: center; justify-content: space-between; }
-    .brand { font-weight: 700; font-size: 1.25rem; color: #0f172a; display: flex; align-items: center; gap: 0.5rem; }
-    .badge { background: #dbeafe; color: var(--primary); font-size: 0.75rem; padding: 0.2rem 0.6rem; border-radius: 9999px; font-weight: 600; }
-    nav a { margin: 0 0.5rem; color: var(--text-muted); text-decoration: none; font-size: 0.875rem; font-weight: 500; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+    .nav-container {
+      max-width: 1024px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand {
+      font-weight: 700;
+      font-size: 1.25rem;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      text-decoration: none;
+    }
+    .badge {
+      background: #dbeafe;
+      color: var(--primary);
+      font-size: 0.75rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+    nav {
+      display: flex;
+      gap: 1rem;
+      overflow-x: auto;
+    }
+    nav a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      white-space: nowrap;
+      transition: color 0.15s ease;
+    }
     nav a:hover { color: var(--primary); }
-    main { max-width: 960px; margin: 2rem auto; padding: 0 1.5rem; display: flex; flex-direction: column; gap: 3rem; }
-    section { display: flex; flex-direction: column; gap: 1rem; }
-    h1 { font-size: 1.85rem; color: #0f172a; font-weight: 800; }
-    h2 { font-size: 1.4rem; color: #0f172a; font-weight: 700; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
-    h3 { font-size: 1rem; color: #334155; font-weight: 600; }
-    .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; }
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; text-decoration: none; color: inherit; display: block; transition: border-color 0.2s ease; }
-    .card:hover { border-color: var(--primary); }
-    .card-title { font-weight: 600; color: #0f172a; margin-bottom: 0.25rem; font-size: 0.95rem; }
-    .card-desc { font-size: 0.85rem; color: var(--text-muted); }
-    pre { background: #0f172a; color: #e2e8f0; padding: 1rem; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; overflow-x: auto; line-height: 1.5; }
-    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #e2e8f0; padding: 0.1rem 0.3rem; border-radius: 4px; font-size: 0.85rem; }
-    pre code { background: transparent; padding: 0; color: inherit; }
-    .alert { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 0.75rem 1rem; font-size: 0.85rem; color: #92400e; border-radius: 4px; }
-    ul, ol { padding-left: 1.25rem; font-size: 0.9rem; color: #475569; display: flex; flex-direction: column; gap: 0.25rem; }
-    footer { text-align: center; font-size: 0.8rem; color: var(--text-muted); padding: 2rem 0; border-top: 1px solid var(--border); margin-top: 3rem; }
+    main {
+      max-width: 1024px;
+      margin: 2rem auto;
+      padding: 0 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 3.5rem;
+    }
+    section {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      scroll-margin-top: 80px;
+    }
+    h1 {
+      font-size: 1.95rem;
+      color: #0f172a;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+    h2 {
+      font-size: 1.45rem;
+      color: #0f172a;
+      font-weight: 700;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.6rem;
+      letter-spacing: -0.01em;
+    }
+    h3 {
+      font-size: 1.05rem;
+      color: #1e293b;
+      font-weight: 600;
+      margin-top: 0.5rem;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.25rem;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+      text-decoration: none;
+      color: inherit;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .card:hover {
+      border-color: var(--primary);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    }
+    .card-title {
+      font-weight: 600;
+      color: #0f172a;
+      font-size: 1rem;
+    }
+    .card-desc {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    pre {
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 1.2rem;
+      border-radius: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.85rem;
+      overflow-x: auto;
+      line-height: 1.55;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      background: #e2e8f0;
+      color: #0f172a;
+      padding: 0.15rem 0.35rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+    }
+    .alert {
+      background: #fffbeb;
+      border-left: 4px solid #f59e0b;
+      padding: 0.9rem 1.1rem;
+      font-size: 0.875rem;
+      color: #92400e;
+      border-radius: 4px;
+      line-height: 1.5;
+    }
+    .alert strong { color: #78350f; }
+    ul, ol {
+      padding-left: 1.4rem;
+      font-size: 0.925rem;
+      color: #334155;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.5rem;
+      font-size: 0.875rem;
+      background: var(--card);
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    th, td {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+    th {
+      background: #f1f5f9;
+      font-weight: 600;
+      color: #0f172a;
+    }
+    footer {
+      text-align: center;
+      font-size: 0.825rem;
+      color: var(--text-muted);
+      padding: 2.5rem 0;
+      border-top: 1px solid var(--border);
+      margin-top: 3rem;
+    }
   </style>
 </head>
 <body>
   <header>
     <div class="nav-container">
-      <div class="brand">gem-bridge <span class="badge">Pipeline Docs</span></div>
+      <a href="#" class="brand">gem-bridge <span class="badge">Pipeline v1.0</span></a>
       <nav>
-        <a href="#overview">개요 및 목적</a>
+        <a href="#overview">개요</a>
         <a href="#docs">문서</a>
         <a href="#architecture">동작구조</a>
-        <a href="#setup">설치</a>
+        <a href="#setup">설치 및 설정</a>
         <a href="#usage">사용법</a>
-        <a href="#maintenance">업데이트/삭제</a>
+        <a href="#maintenance">유지보수</a>
       </nav>
     </div>
   </header>
+
   <main>
     <section id="overview">
       <h1>프로젝트 개요 및 목적 (Project Purpose)</h1>
       <p style="color: #475569; font-size: 1.05rem;">
-        <strong>gem-bridge</strong>는 모바일 Gemini 앱이나 Google Drive에서 발행한 태스크 명세를 감지하여, 로컬 작업 공간(WSL)의 코드를 자동으로 수정하고 원격 Git 저장소에 Commit & Push까지 수행하는 <strong>Google Workspace ↔ Git 자동화 파이프라인 데몬</strong>입니다.
+        <strong>gem-bridge</strong>는 모바일 Gemini 앱이나 Google Drive 동기화 폴더에서 발행된 태스크 명세를 실시간 감지하여,
+        로컬 워크스페이스(WSL2) 환경의 코드를 안전하게 반영하고 원격 Git 저장소에 자동 Commit & Push를 수행하는
+        <strong>Google Workspace ↔ Git 자동화 파이프라인 데몬</strong>입니다.
       </p>
       <div class="grid-3">
         <div class="card">
-          <div class="card-title" style="color: var(--primary);">모바일 주도 개발</div>
-          <div class="card-desc">PC 앞이 아니어도 모바일 Gemini를 통해 드라이브에 태스크를 전달하고 Git 커밋 자동 트리거</div>
+          <div class="card-title" style="color: var(--primary);">모바일 원격 주도 개발</div>
+          <div class="card-desc">PC 환경에 직접 접속하지 않고도 모바일 Gemini 앱으로 태스크 파일을 드라이브에 생성하여 자동 코드 수정 및 Push를 수행합니다.</div>
         </div>
         <div class="card">
-          <div class="card-title" style="color: var(--primary);">경량 백그라운드 상주</div>
-          <div class="card-desc">WSL 내 systemd 데몬으로 상시 구동되어 파일 I/O 이벤트를 실시간 감시 및 즉각 처리</div>
+          <div class="card-title" style="color: var(--primary);">안정적인 백그라운드 상주</div>
+          <div class="card-desc">Linux systemd 서비스 데몬으로 등록되어 파일 I/O 이벤트(Polling Loop / Inotify)를 무중단 감시합니다.</div>
         </div>
         <div class="card">
-          <div class="card-title" style="color: var(--primary);">자동 격리 및 아카이빙</div>
-          <div class="card-desc">처리 완료된 태스크는 타임스탬프와 함께 <code>processed/</code> 디렉터리로 안전하게 보관</div>
+          <div class="card-title" style="color: var(--primary);">무결성 및 격리 아카이빙</div>
+          <div class="card-desc">가상 파일(.gdoc) 필터링, 에러 방지 처리 및 완료된 작업 파일의 <code>processed/</code> 자동 이동으로 멱등성을 보장합니다.</div>
         </div>
       </div>
     </section>
 
     <section id="docs">
-      <h2>주요 문서 및 명세 (Docs)</h2>
+      <h2>주요 문서 및 명세 (Documentation)</h2>
       <div class="grid-3">
         <a href="https://github.com/al-hub/gem-bridge" class="card" target="_blank" rel="noopener noreferrer">
-          <div class="card-title">README.md ↗</div>
-          <div class="card-desc">프로젝트 전체 개요, 기본 환경 설정 및 빠른 시작 가이드</div>
+          <div class="card-title">GitHub Repository ↗</div>
+          <div class="card-desc">프로젝트 저장소 메인 페이지, README 및 전체 소스 코드</div>
         </a>
         <a href="https://github.com/al-hub/gem-bridge/blob/main/docs/guide.md" class="card" target="_blank" rel="noopener noreferrer">
           <div class="card-title">docs/guide.md ↗</div>
-          <div class="card-desc">운영 종합 지침서 (에러 핸들링, 모바일 최적화 및 시스템 가이드)</div>
+          <div class="card-desc">아키텍처 명세, 모바일 최적화 규칙, 장애 복구 가이드</div>
         </a>
         <a href="https://github.com/al-hub/gem-bridge/blob/main/docs/verification.md" class="card" target="_blank" rel="noopener noreferrer">
           <div class="card-title">docs/verification.md ↗</div>
-          <div class="card-desc">모바일 Gemini 앱 ↔ 로컬 데몬 ↔ Git 커밋 파이프라인 검증 이력</div>
+          <div class="card-desc">모바일 Gemini ↔ 데몬 ↔ Git 파이프라인 연동 실증 및 검증 내역</div>
         </a>
       </div>
     </section>
@@ -89,103 +266,130 @@
     <section id="architecture">
       <h2>전체 동작 구조 및 아키텍처 (Architecture)</h2>
       <p style="font-size: 0.95rem; color: #475569;">
-        gem-bridge는 외부 서비스/모바일 환경과 로컬 워크스페이스 간의 비동기 메시지 기반 파이프라인으로 작동합니다.
+        gem-bridge는 모바일 입력 계층, 동기화 감시 계층, 코드 처리 계층, Git 버전 관리 계층으로 분리된 비동기 이벤트 파이프라인 구조를 갖습니다.
       </p>
       <pre>
-┌─────────────────────────────────────────────────────────────────────────┐
-│                      1. 모바일 / Gemini 클라이언트                      │
-│        - 이동 중 태스크 명세 작성 및 Google Drive 폴더 저장             │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │ Sync (Google Drive Desktop)
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│              2. 마운트 폴더 감시 (WSL /mnt/g/GeminiBridge/)             │
-│   ┌─────────────────────────────────────────────────────────────────┐   │
-│   │                 gem-bridge 데몬 (bridge_daemon)                 │   │
-│   │   - 파일 이벤트 감시 (Polling Loop / File Watcher)              │   │
-│   │   - .gdoc 가상 파일 필터링 및 일반 텍스트 태스크 Parsing       │   │
-│   └────────────────────────────────┬────────────────────────────────┘   │
-└────────────────────────────────────┼────────────────────────────────────┘
-                                     │
-            ┌────────────────────────┴────────────────────────┐
-            ▼                                                 ▼
-┌───────────────────────────────┐                 ┌───────────────────────┐
-│  3. 로컬 소스코드 반영        │                 │ 4. Git 자동화 처리    │
-│  - workspace 파일 수정/생성   │                 │ - git add / commit    │
-│  - 문맥 반영 및 코드 적용     │                 │ - origin main Push    │
-└───────────┬───────────────────┘                 └───────────┬───────────┘
-            │                                                 │
-            └────────────────────────┬────────────────────────┘
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    5. 태스크 완결 및 격리 아카이빙                      │
-│        - 처리된 태스크 파일을 GeminiBridge/processed/ 이동             │
-└─────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          1. 모바일 / Gemini 클라이언트                      │
+│       - 스마트폰 Gemini 앱 또는 Google Drive 웹/앱에서 작업 명세 작성       │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │ Cloud Sync (Google Drive Desktop)
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                2. 마운트 폴더 감시 (WSL /mnt/g/.../GeminiBridge/)           │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                   gem-bridge 데몬 (bridge_daemon)                   │   │
+│   │   - 파일 이벤트 감시 (Polling Loop / File Watcher)                  │   │
+│   │   - .gdoc 가상 링크 파일 필터링 ([Errno 5] 방지)                    │   │
+│   │   - 실질 텍스트 파일(.txt, .md, .json) 파싱 및 명령 추출            │   │
+│   └──────────────────────────────────┬──────────────────────────────────┘   │
+└──────────────────────────────────────┼──────────────────────────────────────┘
+                                       │
+              ┌────────────────────────┴────────────────────────┐
+              ▼                                                 ▼
+┌─────────────────────────────────┐           ┌───────────────────────────────┐
+│     3. 로컬 소스코드 작업 반영  │           │      4. Git 자동화 파이프라인 │
+│ - 타깃 저장소 소스 파일 수정    │           │ - 변경 파일 인덱싱 (git add)  │
+│ - 템플릿 생성 및 리팩토링 검증  │           │ - 유의미한 커밋 생성 및 Push  │
+└────────────────┬────────────────┘           └───────────────┬───────────────┘
+                 │                                             │
+                 └──────────────────────┬──────────────────────┘
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        5. 태스크 완결 및 안전 아카이빙                      │
+│            - 처리 완료된 명세 파일을 GeminiBridge/processed/ 폴더로 이동     │
+└─────────────────────────────────────────────────────────────────────────────┘
       </pre>
+
       <div class="alert">
-        <strong>I/O 및 동작 주의 사항:</strong> Windows Google Drive 동기화 폴더의 가상 링크 파일(<code>.gdoc</code>)은 WSL I/O 시 <code>[Errno 5]</code>가 발생하므로, 일반 텍스트 태스크 파일(<code>.txt</code>, <code>.md</code>, <code>.json</code> 등)만 감시 대상으로 처리합니다.
+        <strong>WSL 마운트 I/O 주의사항:</strong> Google Drive Desktop이 생성하는 <code>.gdoc</code> 포인터 파일은 Linux 환경에서 직접 읽을 시 <code>[Errno 5] Input/output error</code>가 발생할 수 있습니다. <strong>gem-bridge</strong>는 이를 자동 감지 및 건너뛰며, 실제 텍스트 내용(<code>.txt</code>, <code>.md</code>, <code>.json</code>)만 안전하게 수집합니다.
       </div>
     </section>
 
     <section id="setup">
       <h2>설치 및 환경 설정 (Installation & Setup)</h2>
+      
       <h3>1) 사전 준비 사항</h3>
       <ul>
-        <li>Windows WSL2 (Ubuntu Linux) 환경</li>
-        <li>Google Drive for Desktop 설치 및 마운트 (예: <code>/mnt/g/My Drive/GeminiBridge/</code>)</li>
-        <li>Python 3.10+ 및 Git 인증 설정 (SSH Key 또는 Personal Access Token)</li>
+        <li><strong>운영체제:</strong> Windows WSL2 (Ubuntu 20.04/22.04 LTS 이상)</li>
+        <li><strong>연동 드라이브:</strong> Windows Google Drive for Desktop 실행 및 WSL 마운트 경로 확인 (예: <code>/mnt/g/My Drive/GeminiBridge/</code>)</li>
+        <li><strong>런타임:</strong> Python 3.10 이상 및 Git SSH/PAT 인증 완료 환경</li>
       </ul>
-      <h3 style="margin-top: 1rem;">2) 저장소 클론 및 종속성 설치</h3>
-      <pre>git clone https://github.com/al-hub/gem-bridge.git ~/workspace/gem-bridge
+
+      <h3 style="margin-top: 1rem;">2) 소스 클론 및 종속성 설치</h3>
+      <pre># 저장소 클론
+git clone https://github.com/al-hub/gem-bridge.git ~/workspace/gem-bridge
 cd ~/workspace/gem-bridge
+
+# 가상환경(선택) 또는 필수 패키지 설치
 pip install -r requirements.txt</pre>
-      <h3 style="margin-top: 1rem;">3) 설정 파일 작성 및 systemd 데몬 등록</h3>
-      <pre># 1. 설정 파일 (config.json) 생성 및 감시 경로 지정
+
+      <h3 style="margin-top: 1rem;">3) 설정 파일 및 폴더 구조 준비</h3>
+      <pre># 예제 설정 복사 및 실제 경로 수정
 cp config.example.json config.json
 
-# 2. systemd 서비스 등록
+# 감시할 Google Drive 폴더 및 아카이브 경로 생성
+mkdir -p "/mnt/g/My Drive/GeminiBridge/processed"</pre>
+
+      <h3 style="margin-top: 1rem;">4) systemd 데몬 등록 및 실행</h3>
+      <pre># 서비스 파일 시스템 등록
 sudo cp gem-bridge.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now gem-bridge.service
 
-# 3. 구동 상태 및 로그 확인
+# 데몬 구동 상태 및 실시간 로그 모니터링
 sudo systemctl status gem-bridge.service
 journalctl -u gem-bridge.service -f</pre>
     </section>
 
     <section id="usage">
-      <h2>사용 방법 (Usage)</h2>
+      <h2>사용 방법 및 워크플로우 (Usage Workflow)</h2>
       <ol>
-        <li><strong>태스크 명세 작성:</strong> 모바일 스마트폰이나 웹 브라우저의 Google Drive <code>GeminiBridge/</code> 폴더에 수행할 작업 명세 파일(예: <code>task_001.txt</code>)을 생성합니다.</li>
-        <li><strong>자동 감지 및 실행:</strong> 백그라운드 상주 중인 <code>gem-bridge</code> 데몬이 파일 작성을 자동 감지하고 로컬 작업 공간의 코드를 수정합니다.</li>
-        <li><strong>Git 커밋 및 Push:</strong> 변경 내용이 확인되면 데몬이 Git 커밋 메시지를 생성하여 원격 저장소로 자동 Push합니다.</li>
-        <li><strong>아카이빙 확인:</strong> 처리가 완료된 태스크 파일은 <code>GeminiBridge/processed/</code> 폴더로 자동 이동됩니다.</li>
+        <li>
+          <strong>태스크 발행:</strong> 모바일 스마트폰이나 웹 브라우저의 Google Drive <code>GeminiBridge/</code> 폴더에 작업 내용이 담긴 텍스트 파일(예: <code>task_20260408_01.txt</code>)을 업로드하거나 작성합니다.
+        </li>
+        <li>
+          <strong>데몬 감지:</strong> 상주 중인 <code>gem-bridge</code> 데몬이 파일 유입을 실시간 감지하여 포인터 여부를 판별하고 내용을 파싱합니다.
+        </li>
+        <li>
+          <strong>코드 수정 및 검증:</strong> 명세서에 지시된 워크스페이스 내 대상 파일에 변경 사항을 정확히 적용합니다.
+        </li>
+        <li>
+          <strong>Git Commit & Push:</strong> 수정 사항을 스테이징(<code>git add</code>)하고 자동 커밋 메시지를 생성하여 원격 저장소의 메인 브랜치로 자동 Push합니다.
+        </li>
+        <li>
+          <strong>완료 아카이빙:</strong> 처리가 완료된 태스크 파일은 중복 실행 방지를 위해 <code>GeminiBridge/processed/</code> 디렉터리로 즉시 이동 격리됩니다.
+        </li>
       </ol>
     </section>
 
     <section id="maintenance">
-      <h2>업데이트 및 삭제 방법 (Update & Uninstall)</h2>
-      <h3>코드 업데이트 (Update)</h3>
+      <h2>유지보수 및 제거 (Maintenance & Uninstallation)</h2>
+
+      <h3>1) 최신 버전 업데이트</h3>
       <pre>cd ~/workspace/gem-bridge
 git pull origin main
 pip install -r requirements.txt
 sudo systemctl restart gem-bridge.service</pre>
-      <h3 style="margin-top: 1rem;">서비스 제거 및 삭제 (Uninstall)</h3>
-      <pre># 1. systemd 서비스 중지 및 비활성화
+
+      <h3 style="margin-top: 1rem;">2) 서비스 완전 제거 (Uninstall)</h3>
+      <pre># 1. systemd 서비스 중지 및 자동 시작 해제
 sudo systemctl stop gem-bridge.service
 sudo systemctl disable gem-bridge.service
 
-# 2. 서비스 파일 삭제 및 데몬 리로드
+# 2. 서비스 정의 파일 삭제 및 systemd 리로드
 sudo rm /etc/systemd/system/gem-bridge.service
 sudo systemctl daemon-reload
+sudo systemctl reset-failed
 
-# 3. 프로젝트 디렉터리 제거 (선택 사항)
+# 3. 로컬 프로젝트 디렉터리 정리 (필요시)
 rm -rf ~/workspace/gem-bridge</pre>
     </section>
   </main>
+
   <footer>
     <div>gem-bridge Project · Open Source pipeline under al-hub</div>
-    <div style="margin-top: 0.25rem;">제작자: al-hub</div>
+    <div style="margin-top: 0.35rem;">Repository: <a href="https://github.com/al-hub/gem-bridge" style="color: var(--primary); text-decoration: none;">github.com/al-hub/gem-bridge</a></div>
   </footer>
 </body>
 </html>
