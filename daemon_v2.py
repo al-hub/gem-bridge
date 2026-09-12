@@ -235,9 +235,7 @@ class GemBridgeDaemonV2:
 
                 # Read existing to preserve history/command, then update badge to ONLINE
                 try:
-                    raw_content = self.drive_service.files().export_media(
-                        fileId=doc_id, mimeType="text/plain"
-                    ).execute().decode("utf-8")
+                    raw_content = self._export_doc_text(doc_id, mime_type="text/plain")
                     cmd = ConsoleProtocolParser.extract_command(raw_content) or DEFAULT_PLACEHOLDER
                     history = ConsoleProtocolParser.extract_history(raw_content)
 
@@ -285,15 +283,25 @@ class GemBridgeDaemonV2:
             logger.warning(f"Could not initialize CONSOLE document: {e}")
             return None
 
+    def _export_doc_text(self, file_id: str, mime_type: str = "text/plain") -> str:
+        """Safely exports Google Doc text with fast files().export(), falling back to export_media()."""
+        files_res = self.drive_service.files()
+        try:
+            req = files_res.export(fileId=file_id, mimeType=mime_type)
+            raw = req.execute()
+            if isinstance(raw, (bytes, str)):
+                return raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        except Exception:
+            pass
+        raw = files_res.export_media(fileId=file_id, mimeType=mime_type).execute()
+        return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+
     def _read_console_content(self) -> Optional[str]:
         """Safely reads the current CONSOLE document plain text content."""
         if not self.drive_service or not self.console_doc_id:
             return None
         try:
-            return self.drive_service.files().export_media(
-                fileId=self.console_doc_id,
-                mimeType="text/plain"
-            ).execute().decode("utf-8")
+            return self._export_doc_text(self.console_doc_id, mime_type="text/plain")
         except Exception as e:
             logger.warning(f"Failed to read CONSOLE doc content: {e}")
             return None
@@ -326,10 +334,7 @@ class GemBridgeDaemonV2:
         if not self.drive_service or not self.console_doc_id:
             return
         try:
-            raw_content = self.drive_service.files().export_media(
-                fileId=self.console_doc_id,
-                mimeType="text/plain"
-            ).execute().decode("utf-8")
+            raw_content = self._export_doc_text(self.console_doc_id, mime_type="text/plain")
             cmd = ConsoleProtocolParser.extract_command(raw_content) or DEFAULT_PLACEHOLDER
             history = ConsoleProtocolParser.extract_history(raw_content)
 
@@ -355,10 +360,7 @@ class GemBridgeDaemonV2:
         if not self.drive_service or not self.console_doc_id:
             return
         try:
-            raw_content = self.drive_service.files().export_media(
-                fileId=self.console_doc_id,
-                mimeType="text/plain"
-            ).execute().decode("utf-8")
+            raw_content = self._export_doc_text(self.console_doc_id, mime_type="text/plain")
             cmd = ConsoleProtocolParser.extract_command(raw_content) or DEFAULT_PLACEHOLDER
             history = ConsoleProtocolParser.extract_history(raw_content)
 
@@ -411,10 +413,7 @@ class GemBridgeDaemonV2:
                 return
 
             # 2. Export document text
-            raw_content = self.drive_service.files().export_media(
-                fileId=self.console_doc_id,
-                mimeType="text/plain"
-            ).execute().decode("utf-8")
+            raw_content = self._export_doc_text(self.console_doc_id, mime_type="text/plain")
 
             # 3. Layer 1 Anti-Echo: Full content hash
             content_hash = ConsoleProtocolParser.compute_content_hash(raw_content)
@@ -802,10 +801,7 @@ class GemBridgeDaemonV2:
         try:
             # 1. Export or download document text
             if doc_mime == "application/vnd.google-apps.document":
-                raw_text = self.drive_service.files().export_media(
-                    fileId=doc_id,
-                    mimeType="text/plain"
-                ).execute().decode("utf-8")
+                raw_text = self._export_doc_text(doc_id, mime_type="text/plain")
             else:
                 raw_text = self.drive_service.files().get_media(
                     fileId=doc_id

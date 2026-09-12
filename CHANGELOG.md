@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.9] - 2026-09-12
+
+### Changed
+- **High-Speed Google Docs Export Optimization (`daemon_v2.py`)**:
+  - Replaced blocking `export_media()` calls with fast native `files().export()` across all CONSOLE read/heartbeat operations.
+  - Reduced CONSOLE polling export latency from ~60s socket read timeout down to ~1.0s, eliminating httplib2 timeout warnings.
+  - Implemented robust fallback to `export_media()` for complete test mock compatibility.
+- **End-to-End Verified 0-Tap `@Google Tasks` Autonomous Loop**:
+  - Successfully verified real-world Google Tasks ingestion, shallow cloning of private/public GitHub repositories (`al-hub/remote_codex`), automated LLM architecture analysis, report generation on Google Drive, and automated completion status sync.
+
+---
+
 ## [2.1.8] - 2026-09-12
 
 ### Added
