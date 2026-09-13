@@ -147,6 +147,18 @@ class GemBridgeDaemonV2:
         # 2) Standard API Key client (Tiered Fallback chain)
         self.gemini_client = genai.Client(api_key=self.gemini_api_key) if self.gemini_api_key else None
 
+        # Initialize Google Code Assist Client (Tier-0 Engine: gemini-3.8-flash-tiered)
+        try:
+            from core.codeassist_client import CodeAssistClient
+            self.codeassist_client = CodeAssistClient()
+            if self.codeassist_client.is_available():
+                logger.info("Google Code Assist Client successfully initialized (Tier-0 Primary: gemini-3.8-flash-tiered).")
+            else:
+                logger.info("Google Code Assist Client token not available (will use Tier-1 fallback).")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Google Code Assist Client: {e}")
+            self.codeassist_client = None
+
         # Initialize core components
         self.repo_manager = RepoManager(repo_mapping=self.repo_mapping)
         self.intent_analyzer = IntentAnalyzer(
@@ -156,12 +168,14 @@ class GemBridgeDaemonV2:
         self.read_executor = ReadExecutor(
             drive_service=self.drive_service if (self.mode == "hybrid" or self.drive_backup) else None,
             gemini_client=self.gemini_client,
-            user_gemini_client=self.user_gemini_client
+            user_gemini_client=self.user_gemini_client,
+            codeassist_client=self.codeassist_client
         )
         self.write_executor = WriteExecutor(
             protected_patterns=self.config.get("protected_files"),
             gemini_client=self.gemini_client,
-            user_gemini_client=self.user_gemini_client
+            user_gemini_client=self.user_gemini_client,
+            codeassist_client=self.codeassist_client
         )
         self.exec_executor = ExecExecutor(drive_service=self.drive_service)
 

@@ -36,11 +36,13 @@ class ReadExecutor:
         gemini_client,
         model_name: str = DEFAULT_MODEL,
         user_gemini_client: Optional[object] = None,
+        codeassist_client: Optional[object] = None,
     ):
         self.drive_service = drive_service
         self.gemini_client = gemini_client
         self.model_name = model_name
         self.user_gemini_client = user_gemini_client
+        self.codeassist_client = codeassist_client
 
     def execute(
         self,
@@ -224,6 +226,20 @@ class ReadExecutor:
 4. 절대 가상의 내용을 지어내지 말고, 제공된 컨텍스트에 기반하여 정확하게 설명하세요.
 """
         is_deep = getattr(intent, "model_tier", "default") == "deep"
+
+        # Tier-0 Priority: Google Code Assist Direct Bridge (agy OAuth session)
+        if self.codeassist_client and getattr(self.codeassist_client, "is_available", lambda: False)() and is_deep:
+            try:
+                logger.info("[READ Executor] Attempting Tier-0 report generation with gemini-3.8-flash-tiered via CodeAssist...")
+                c_text = self.codeassist_client.generate_content(
+                    prompt=prompt,
+                    model="gemini-3.8-flash-tiered"
+                )
+                if c_text:
+                    logger.info("[READ Executor] Successfully generated report using gemini-3.8-flash-tiered (CodeAssist Tier-0).")
+                    return c_text.strip()
+            except Exception as e:
+                logger.warning(f"[READ Executor] Tier-0 CodeAssist report generation failed with gemini-3.8-flash-tiered: {e}. Cascading to Tier-1 User OAuth...")
 
         # Tier-1 Priority: User OAuth account with gemini-3.8-flash (if available and is_deep)
         if self.user_gemini_client and is_deep:

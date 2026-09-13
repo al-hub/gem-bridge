@@ -156,6 +156,65 @@ class TestExecutorRead(unittest.TestCase):
         api_call = self.mock_gemini.models.generate_content.call_args_list[0][1]
         self.assertEqual(api_call["model"], "gemini-3.8-flash")
 
+    def test_generate_report_prefers_tier0_codeassist_client(self):
+        mock_codeassist = MagicMock()
+        mock_codeassist.is_available.return_value = True
+        mock_codeassist.generate_content.return_value = "# CodeAssist 보고서\n- 정상 완료"
+        mock_user_gemini = MagicMock()
+
+        executor = ReadExecutor(
+            drive_service=self.mock_drive,
+            gemini_client=self.mock_gemini,
+            user_gemini_client=mock_user_gemini,
+            codeassist_client=mock_codeassist
+        )
+
+        intent = IntentAnalysisResult(
+            task_type=TaskType.READ,
+            summary="심층 분석 요청",
+            target_repo="test-repo",
+            query="구조 분석",
+            model_tier="deep"
+        )
+
+        result = executor.execute(self.repo_dir, intent, original_title="!분석 test-repo")
+        self.assertEqual(result["status"], "success")
+        self.assertIn("CodeAssist 보고서", result["report"])
+        self.assertEqual(mock_codeassist.generate_content.call_count, 1)
+        self.assertEqual(mock_user_gemini.models.generate_content.call_count, 0)
+        self.assertEqual(self.mock_gemini.models.generate_content.call_count, 0)
+
+    def test_generate_report_cascades_from_codeassist_to_user_oauth(self):
+        mock_codeassist = MagicMock()
+        mock_codeassist.is_available.return_value = True
+        mock_codeassist.generate_content.side_effect = RuntimeError("CodeAssist 503 Unavailable")
+        mock_user_gemini = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "# User OAuth 3.8 보고서\n- 정상 완료"
+        mock_user_gemini.models.generate_content.return_value = mock_response
+
+        executor = ReadExecutor(
+            drive_service=self.mock_drive,
+            gemini_client=self.mock_gemini,
+            user_gemini_client=mock_user_gemini,
+            codeassist_client=mock_codeassist
+        )
+
+        intent = IntentAnalysisResult(
+            task_type=TaskType.READ,
+            summary="심층 분석 요청",
+            target_repo="test-repo",
+            query="구조 분석",
+            model_tier="deep"
+        )
+
+        result = executor.execute(self.repo_dir, intent, original_title="!분석 test-repo")
+        self.assertEqual(result["status"], "success")
+        self.assertIn("User OAuth 3.8 보고서", result["report"])
+        self.assertEqual(mock_codeassist.generate_content.call_count, 1)
+        self.assertEqual(mock_user_gemini.models.generate_content.call_count, 1)
+        self.assertEqual(self.mock_gemini.models.generate_content.call_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

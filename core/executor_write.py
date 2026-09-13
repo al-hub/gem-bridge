@@ -47,11 +47,26 @@ class WriteExecutor:
         allow_protected_overwrite: bool = False,
         gemini_client: Optional[object] = None,
         user_gemini_client: Optional[object] = None,
+        codeassist_client: Optional[object] = None,
     ):
         self.protected_patterns = protected_patterns or self.DEFAULT_PROTECTED_PATTERNS
         self.allow_protected_overwrite = allow_protected_overwrite
         self.gemini_client = gemini_client
         self.user_gemini_client = user_gemini_client
+        self.codeassist_client = codeassist_client
+
+    def _clean_markdown_fence(self, text: str, original_text: str = "") -> str:
+        """Strips markdown code fences (```) from synthesized code if present."""
+        text_stripped = text.strip()
+        if text_stripped.startswith("```"):
+            lines = text_stripped.splitlines()
+            if len(lines) >= 2 and lines[-1].strip() == "```":
+                text = "\n".join(lines[1:-1])
+            elif text_stripped.endswith("```"):
+                text = text_stripped.split("```", 1)[1].rsplit("```", 1)[0]
+            if not text.endswith("\n") and original_text.endswith("\n"):
+                text += "\n"
+        return text
 
     def is_protected(self, rel_path: str) -> bool:
         """Checks whether a relative file path matches protected file patterns."""
@@ -118,6 +133,20 @@ class WriteExecutor:
 [기존 파일 내용]
 {original_text}
 """
+        # Tier-0 Priority: Google Code Assist Direct Bridge (agy OAuth session)
+        if self.codeassist_client and getattr(self.codeassist_client, "is_available", lambda: False)():
+            try:
+                logger.info("Attempting Tier-0 code synthesis with gemini-3.8-flash-tiered via CodeAssist...")
+                c_text = self.codeassist_client.generate_content(
+                    prompt=prompt,
+                    model="gemini-3.8-flash-tiered"
+                )
+                if c_text:
+                    logger.info("Code synthesis successfully completed using gemini-3.8-flash-tiered (CodeAssist Tier-0).")
+                    return self._clean_markdown_fence(c_text, original_text)
+            except Exception as e:
+                logger.warning(f"Tier-0 CodeAssist synthesis failed with gemini-3.8-flash-tiered: {e}. Cascading to Tier-1 User OAuth...")
+
         # Tier-1 Priority: User OAuth account with gemini-3.8-flash (if available)
         if self.user_gemini_client:
             try:
@@ -129,18 +158,7 @@ class WriteExecutor:
                 user_resp = self.user_gemini_client.models.generate_content(**kwargs)
                 if user_resp and user_resp.text:
                     logger.info("Code synthesis successfully completed using gemini-3.8-flash (User OAuth).")
-                    response = user_resp
-                    text = response.text or ""
-                    text_stripped = text.strip()
-                    if text_stripped.startswith("```"):
-                        lines = text_stripped.splitlines()
-                        if len(lines) >= 2 and lines[-1].strip() == "```":
-                            text = "\n".join(lines[1:-1])
-                        elif text_stripped.endswith("```"):
-                            text = text_stripped.split("```", 1)[1].rsplit("```", 1)[0]
-                        if not text.endswith("\n") and original_text.endswith("\n"):
-                            text += "\n"
-                    return text
+                    return self._clean_markdown_fence(user_resp.text, original_text)
             except Exception as e:
                 logger.warning(f"Tier-1 User OAuth synthesis failed with gemini-3.8-flash: {e}. Cascading to API Key fallback chain...")
 
@@ -169,18 +187,7 @@ class WriteExecutor:
         if not response or not response.text:
             logger.error("All models failed during code synthesis. Falling back to original text.")
             return original_text
-        text = response.text or ""
-        # Strip markdown code blocks if the model accidentally included them
-        text_stripped = text.strip()
-        if text_stripped.startswith("```"):
-            lines = text_stripped.splitlines()
-            if len(lines) >= 2 and lines[-1].strip() == "```":
-                text = "\n".join(lines[1:-1])
-            elif text_stripped.endswith("```"):
-                text = text_stripped.split("```", 1)[1].rsplit("```", 1)[0]
-            if not text.endswith("\n") and original_text.endswith("\n"):
-                text += "\n"
-        return text
+        return self._clean_markdown_fence(response.text or "", original_text)
 
     def execute(
         self,

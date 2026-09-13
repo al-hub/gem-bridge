@@ -232,7 +232,55 @@ class TestExecutorWrite(unittest.TestCase):
         api_call = mock_api_gemini.models.generate_content.call_args_list[0][1]
         self.assertEqual(api_call["model"], "gemini-3.8-flash")
 
+    def test_synthesize_code_prefers_tier0_codeassist_client(self):
+        mock_codeassist = MagicMock()
+        mock_codeassist.is_available.return_value = True
+        mock_codeassist.generate_content.return_value = "def add(a, b): return a + b\n"
+        mock_user_gemini = MagicMock()
+        mock_api_gemini = MagicMock()
+
+        executor = WriteExecutor(
+            gemini_client=mock_api_gemini,
+            user_gemini_client=mock_user_gemini,
+            codeassist_client=mock_codeassist
+        )
+        result = executor.synthesize_code(
+            original_text="def add(a, b): return a - b\n",
+            instruction="Fix bug in add function",
+            target_path="calc.py"
+        )
+        self.assertEqual(result, "def add(a, b): return a + b\n")
+        self.assertEqual(mock_codeassist.generate_content.call_count, 1)
+        self.assertEqual(mock_user_gemini.models.generate_content.call_count, 0)
+        self.assertEqual(mock_api_gemini.models.generate_content.call_count, 0)
+
+    def test_synthesize_code_cascades_from_codeassist_to_user_oauth(self):
+        mock_codeassist = MagicMock()
+        mock_codeassist.is_available.return_value = True
+        mock_codeassist.generate_content.side_effect = RuntimeError("CodeAssist Error: 401 Unauthorized")
+        mock_user_gemini = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "def add(a, b): return a + b\n"
+        mock_user_gemini.models.generate_content.return_value = mock_response
+        mock_api_gemini = MagicMock()
+
+        executor = WriteExecutor(
+            gemini_client=mock_api_gemini,
+            user_gemini_client=mock_user_gemini,
+            codeassist_client=mock_codeassist
+        )
+        result = executor.synthesize_code(
+            original_text="def add(a, b): return a - b\n",
+            instruction="Fix bug in add function",
+            target_path="calc.py"
+        )
+        self.assertEqual(result, "def add(a, b): return a + b\n")
+        self.assertEqual(mock_codeassist.generate_content.call_count, 1)
+        self.assertEqual(mock_user_gemini.models.generate_content.call_count, 1)
+        self.assertEqual(mock_api_gemini.models.generate_content.call_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
