@@ -215,6 +215,79 @@ class TestExecutorRead(unittest.TestCase):
         self.assertEqual(mock_user_gemini.models.generate_content.call_count, 1)
         self.assertEqual(self.mock_gemini.models.generate_content.call_count, 0)
 
+    def test_read_hero_file_mode_and_document_briefing(self):
+        family_dir = self.repo_dir / "family"
+        family_dir.mkdir(parents=True, exist_ok=True)
+        memory_file = family_dir / "jinmok-odyssey-memory.md"
+        memory_file.write_text("# 진목 오디세이 회고록\n가족 서사 기록 본문입니다.", encoding="utf-8")
+
+        intent = IntentAnalysisResult(
+            task_type=TaskType.READ,
+            target_repo="test-repo",
+            summary="진목 오디세이 내용 요약",
+            query="진목 오디세이 내용 알려줘",
+            target_files_or_dirs=["jinmok-odyssey-memory.md"]
+        )
+
+        context, candidate_files = self.executor._gather_repo_context(
+            self.repo_dir, intent.target_files_or_dirs, return_files=True
+        )
+        self.assertEqual(len(candidate_files), 1)
+        self.assertEqual(candidate_files[0], memory_file)
+        self.assertIn("단일 대상 파일 집중 모드 (Hero File Mode)", context)
+        self.assertIn("진목 오디세이 회고록", context)
+        # Tree should be suppressed in hero mode
+        self.assertNotIn("├── app.py", context)
+
+        mode = self.executor._determine_read_mode(intent, candidate_files)
+        self.assertEqual(mode, "DOCUMENT_BRIEFING")
+
+        # Execute and check prompt sent to Gemini
+        self.executor.execute(self.repo_dir, intent, original_title="!분석 진목 오디세이")
+        gemini_call = self.mock_gemini.models.generate_content.call_args[1]
+        prompt_used = gemini_call["contents"]
+        self.assertIn("리서치 분석가 및 도큐먼트 전문가", prompt_used)
+        self.assertIn("핵심 요약 (Executive Summary)", prompt_used)
+
+    def test_read_code_explain_mode(self):
+        intent = IntentAnalysisResult(
+            task_type=TaskType.READ,
+            target_repo="test-repo",
+            summary="app.py 모듈 분석",
+            query="app.py 역할 설명해줘",
+            target_files_or_dirs=["src/app.py"]
+        )
+
+        context, candidate_files = self.executor._gather_repo_context(
+            self.repo_dir, intent.target_files_or_dirs, return_files=True
+        )
+        mode = self.executor._determine_read_mode(intent, candidate_files)
+        self.assertEqual(mode, "CODE_EXPLAIN")
+
+        self.executor.execute(self.repo_dir, intent)
+        gemini_call = self.mock_gemini.models.generate_content.call_args[1]
+        prompt_used = gemini_call["contents"]
+        self.assertIn("시니어 소프트웨어 엔지니어", prompt_used)
+        self.assertIn("모듈 개요 및 주요 책임", prompt_used)
+
+    def test_read_missing_file_warning_no_silent_fallback(self):
+        intent = IntentAnalysisResult(
+            task_type=TaskType.READ,
+            target_repo="test-repo",
+            summary="존재하지 않는 파일 조회",
+            query="missing.md 내용 요약해줘",
+            target_files_or_dirs=["missing.md"]
+        )
+
+        context, candidate_files = self.executor._gather_repo_context(
+            self.repo_dir, intent.target_files_or_dirs, return_files=True
+        )
+        self.assertEqual(len(candidate_files), 0)
+        self.assertIn("경고: 요청 파일 미발견", context)
+        self.assertIn("missing.md", context)
+        # Should NOT silently include README.md content when a specific target was missing
+        self.assertNotIn("Sample documentation", context)
+
 
 if __name__ == "__main__":
     unittest.main()

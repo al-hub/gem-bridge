@@ -279,6 +279,54 @@ class TestExecutorWrite(unittest.TestCase):
         self.assertEqual(mock_user_gemini.models.generate_content.call_count, 1)
         self.assertEqual(mock_api_gemini.models.generate_content.call_count, 0)
 
+    @patch.object(WriteExecutor, "_git_commit_and_push", return_value="memo123")
+    def test_memo_atomic_append_scenario_6(self, mock_git):
+        daily_note = self.repo_dir / "daily-note.md"
+        daily_note.write_text("# Daily Notes\n- 2026-09-12: Initial note\n", encoding="utf-8")
+
+        executor = WriteExecutor()
+        intent = IntentAnalysisResult(
+            task_type=TaskType.WRITE,
+            target_repo="gem-bridge",
+            summary="daily-note.md에 AI 파이프라인 아이디어 3가지 추가해줘",
+            target_path="daily-note.md",
+            content="- 1. 모바일 관제 파이프라인\n- 2. 결정론적 도구 매핑\n- 3. 역피라미드 레이아웃",
+            commit_message="memo: add 3 AI pipeline ideas to daily-note.md"
+        )
+
+        result = executor.execute(self.repo_dir, intent)
+        self.assertEqual(result["status"], "success")
+
+        updated_text = daily_note.read_text(encoding="utf-8")
+        self.assertIn("# Daily Notes", updated_text)
+        self.assertIn("- 2026-09-12: Initial note", updated_text)
+        self.assertIn("### 🎙️ [메모 기록]", updated_text)
+        self.assertIn("1. 모바일 관제 파이프라인", updated_text)
+        # Temp file must be cleaned up by atomic replace
+        self.assertFalse((self.repo_dir / ".daily-note.md.tmp").exists())
+
+    @patch.object(WriteExecutor, "_git_commit_and_push", return_value="nest456")
+    def test_write_nested_file_resolution(self, mock_git):
+        family_dir = self.repo_dir / "family"
+        family_dir.mkdir(parents=True, exist_ok=True)
+        note_file = family_dir / "record.md"
+        note_file.write_text("# Old Record\n", encoding="utf-8")
+
+        executor = WriteExecutor()
+        intent = IntentAnalysisResult(
+            task_type=TaskType.WRITE,
+            target_repo="gem-bridge",
+            summary="record.md 내용 갱신",
+            target_path="record.md",
+            content="# Updated Record\nNew text.\n",
+            commit_message="update record.md"
+        )
+
+        result = executor.execute(self.repo_dir, intent)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["target_path"], "family/record.md")
+        self.assertEqual(note_file.read_text(encoding="utf-8"), "# Updated Record\nNew text.\n")
+
 
 if __name__ == "__main__":
     unittest.main()

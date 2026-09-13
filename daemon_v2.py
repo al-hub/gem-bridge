@@ -1274,7 +1274,9 @@ class GemBridgeDaemonV2:
                         turn_num = len(session.turns) if session else 1
                         session_badge = f"\n[📌 세션: {intent.target_repo} ({turn_num}턴 진행 중 / 30분 유효)]\n" if session else ""
 
+                        first_line_choices = "👉 선택지: 1. 세부 항목 상세 분석 | 2. 관련 문서/코드 추가 탐색 | 3. 확인 완료"
                         feedback_notes = (
+                            f"{first_line_choices}\n---\n"
                             f"[분석 완료] {intent.target_repo}\n"
                             f"주제: {intent.summary}\n"
                             f"{docs_url_line}\n{session_badge}\n"
@@ -1337,7 +1339,18 @@ class GemBridgeDaemonV2:
                         turn_num = len(session.turns) if session else 1
                         session_badge = f"\n[📌 세션: {intent.target_repo} ({turn_num}턴 진행 중 / 30분 유효)]\n" if session else ""
 
+                        is_memo = (result.get('target_path') or '').endswith('.md') and any(
+                            k in full_task_text.lower() for k in ['메모', 'daily-note', '아이디어', '추가', '기록']
+                        )
+                        if is_memo:
+                            first_line_choices = "👉 선택지: 1. 이 아이디어로 기술 기획서 초안 작성 | 2. 확인 완료"
+                            rich_prefix = f"[📝메모기록: {commit_hash_short}]"
+                        else:
+                            first_line_choices = "👉 선택지: 1. 추가 단위 테스트 실행 | 2. 다른 파일 연계 수정 | 3. 확인 완료"
+                            rich_prefix = f"[✅완료: {commit_hash_short}]"
+
                         feedback_notes = (
+                            f"{first_line_choices}\n---\n"
                             f"[반영 완료] {intent.target_repo}\n"
                             f"변경 파일: {result.get('target_path')}\n"
                             f"커밋: {commit_hash_short} ({result.get('commit_message')})\n"
@@ -1347,7 +1360,7 @@ class GemBridgeDaemonV2:
                         )
                         target_file = result.get('target_path') or intent.target_path or intent.target_repo
                         summary_msg = result.get('commit_message') or intent.summary or "코드 수정 완료"
-                        rich_title = f"[✅완료: {commit_hash_short}] {target_file} - {summary_msg}"[:120]
+                        rich_title = f"{rich_prefix} {target_file} - {summary_msg}"[:120]
                         self.tasks_manager.update_task_with_feedback(
                             task_id=task_id,
                             is_success=True,
@@ -1397,17 +1410,29 @@ class GemBridgeDaemonV2:
                         is_exec_ok = (str(exit_code) == "0")
                         turn_num = len(session.turns) if session else 1
                         session_badge = f"\n[📌 세션: {intent.target_repo} ({turn_num}턴 진행 중 / 30분 유효)]\n" if session else ""
+
+                        is_test = any(k in (intent.exec_command or full_task_text).lower() for k in ['test', 'pytest', 'unittest'])
+                        if is_test:
+                            if is_exec_ok:
+                                first_line_choices = "👉 선택지: 1. 관련 기능 추가 구현 | 2. 확인 완료"
+                                prefix = "✅테스트: PASS"
+                            else:
+                                first_line_choices = "👉 선택지: 1. 실패한 테스트에 대한 수정안(Diff) 생성 | 2. 상세 재실행 | 3. 확인 완료"
+                                prefix = "❌테스트: FAIL"
+                        else:
+                            first_line_choices = "👉 선택지: 1. 결과 기반 후속 명령 실행 | 2. 확인 완료"
+                            prefix = "✅완료" if is_exec_ok else "❌오류"
+
                         feedback_notes = (
+                            f"{first_line_choices}\n---\n"
                             f"[{'실행 성공' if is_exec_ok else '실행 오류'}] {intent.target_repo}\n"
                             f"명령어: {intent.exec_command}\n"
                             f"종료 코드: {exit_code}\n{session_badge}\n"
                             f"[콘솔 출력]\n"
                             f"{console_output}"
                         )
-                        status_tag = "OK" if is_exec_ok else "실패"
-                        prefix = "✅완료" if is_exec_ok else "❌오류"
                         cmd_summary = intent.summary or intent.exec_command or "명령 실행"
-                        rich_title = f"[{prefix}: {status_tag}] {intent.target_repo} - {cmd_summary}"[:120]
+                        rich_title = f"[{prefix}] {intent.target_repo} - {cmd_summary}"[:120]
                         self.tasks_manager.update_task_with_feedback(
                             task_id=task_id,
                             is_success=is_exec_ok,

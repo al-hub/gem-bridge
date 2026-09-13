@@ -1,4 +1,4 @@
-# gem-bridge (v2.1.18 Core Architecture)
+# gem-bridge (v2.1.19 Core Architecture)
 
 > **스마트폰의 Google Gemini 모바일 앱 및 Google Docs와 로컬/원격 Git 저장소를 유기적으로 연결하는 모듈형 에이전트 브리지 시스템**
 

@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from core.intent_analyzer import IntentAnalysisResult
+from core.path_resolver import RepoPathEngine
 
 try:
     from google.genai import types
@@ -209,7 +210,12 @@ class WriteExecutor:
             raise ValueError("WRITE task requires a valid target_path.")
 
         target_path_str = intent.target_path.replace("\\", "/").strip().lstrip("/")
-        full_path = (repo_path / target_path_str).resolve()
+        resolved_target = RepoPathEngine.resolve(repo_path, target_path_str)
+        if resolved_target:
+            full_path = resolved_target
+            target_path_str = str(resolved_target.relative_to(repo_path))
+        else:
+            full_path = (repo_path / target_path_str).resolve()
 
         # Security check: Ensure target_path stays strictly inside repo_path
         if not full_path.is_relative_to(repo_path):
@@ -221,7 +227,12 @@ class WriteExecutor:
         source_full_path = None
         if intent.source_path:
             source_path_str = intent.source_path.replace("\\", "/").strip().lstrip("/")
-            source_full_path = (repo_path / source_path_str).resolve()
+            resolved_source = RepoPathEngine.resolve(repo_path, source_path_str)
+            if resolved_source:
+                source_full_path = resolved_source
+                source_path_str = str(resolved_source.relative_to(repo_path))
+            else:
+                source_full_path = (repo_path / source_path_str).resolve()
             if not source_full_path.is_relative_to(repo_path):
                 raise PermissionError(
                     f"Directory traversal detected! Source path '{intent.source_path}' is outside repo '{repo_path}'."
@@ -268,8 +279,29 @@ class WriteExecutor:
             except Exception as e:
                 logger.warning(f"Could not read existing source file for diff: {e}")
 
-        # Determine new content: explicit content vs LLM code synthesis
-        if intent.content is not None and intent.content != "":
+        # Determine new content: explicit content vs memo append (Scenario 6) vs LLM code synthesis
+        is_memo_file = target_path_str.endswith(".md") or target_path_str.endswith(".txt")
+        instruction_text = (intent.instruction or intent.summary or "").lower()
+        is_append_request = any(k in instruction_text for k in ["추가", "누적", "기록", "메모", "append", "daily-note"])
+        is_memo_append = is_memo_file and is_append_request and original_text.strip() != ""
+
+        if is_memo_append:
+            # Scenario 6: Atomic memo/note append with timestamp header
+            kst_time = time.strftime("%Y-%m-%d %H:%M KST")
+            memo_header = f"\n\n### 🎙️ [메모 기록] {kst_time}\n"
+            if intent.content:
+                addition = intent.content.strip()
+            elif intent.instruction:
+                addition = self.synthesize_code(
+                    original_text="",
+                    instruction=f"다음 메모/아이디어 내용을 마크다운 불릿 포인트로 정리하세요:\n{intent.instruction}",
+                    target_path=target_path_str,
+                    session_context=session_context
+                ).strip()
+            else:
+                addition = intent.summary.strip()
+            new_content = original_text.rstrip() + memo_header + addition + "\n"
+        elif intent.content is not None and intent.content != "":
             new_content = intent.content
         elif intent.instruction:
             logger.info(f"Synthesizing code for {target_path_str} using instruction: {intent.instruction[:100]}...")
@@ -300,11 +332,13 @@ class WriteExecutor:
         else:
             logger.info(f"No diff detected for {target_path_str} (content unchanged or empty).")
 
-        # Write to target file
+        # Write to target file atomically
         full_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(full_path, "w", encoding="utf-8") as f:
+        tmp_path = full_path.parent / f".{full_path.name}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(new_content)
-        logger.info(f"Successfully wrote file: {full_path}")
+        os.replace(tmp_path, full_path)
+        logger.info(f"Successfully wrote file atomically: {full_path}")
 
         # Handle file move/removal if source_path differs from target_path
         is_moved = False

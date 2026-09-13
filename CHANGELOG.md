@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > - **Locked to v2.1.x**: Major(1st) and Minor(2nd) digits are strictly frozen without explicit user permission.
 > - **Permitted Increments**: Only the 3rd position `z` (`v2.1.z`) is updated (`v2.1.1`, `v2.1.2`, ...).
 
+## [2.1.19] - 2026-09-13
+
+### Added & Enhanced
+- **Intelligent Path Engine (`core/path_resolver.py` - `RepoPathEngine`)**:
+  - Implemented 3-tier path resolution: Tier 1 (Exact match, 0ms), Tier 2 (Git index / `git ls-files` fast lookup), Tier 3 (Pruned recursive walk with auto-extension `.md`, `.txt`, `.py`, delimiter mapping `-` vs `_`, and shallowest depth disambiguation).
+  - Preserves subdirectory matching when path components are provided (e.g. `docs/index.html` never collides with root `index.html`).
+  - Strictly prevents directory traversal (`../`) outside the repository boundary.
+- **Hero File Mode & Content-Adaptive Prompt Dispatcher (`core/executor_read.py`)**:
+  - Implemented single-file focus mode ("Hero File Mode") that suppresses large directory trees and expands the per-file character limit to 50,000 chars for targeted document inquiries (e.g. `jinmok-odyssey-memory.md`).
+  - Added explicit missing-file notices (`### [경고: 요청 파일 미발견]`), strictly eliminating silent fallback to `README.md`.
+  - Content-adaptive prompt dispatcher: dynamically routes prompts to `DOCUMENT_BRIEFING` (narrative, story, and executive summaries without engineering boilerplate), `CODE_EXPLAIN` (module breakdown and responsibilities), and `CODEBASE_ANALYSIS`.
+- **Approval Interceptor & Continuous Session Rescue (`core/intent_analyzer.py`)**:
+  - Added `ApprovalInterceptor` fast-path for single-word / short phrase confirmations (`"승인"`, `"!승인"`, `"1번 머지"`, `"머지해줘"`, `"이대로 반영해줘"`).
+  - Automatically extracts target repository and target file from active session context, completely solving the issue where short approvals were previously downgraded to `READ` by safety guardrails.
+  - Added session context target path rescue in `_analyze_with_llm` fallback guardrails.
+- **Scenario 6: Voice Memo & Idea Accumulator (`core/executor_write.py`)**:
+  - Dedicated append-only mode for markdown/text notes and daily logs, completely preventing accidental file overwrites.
+  - Automatically inserts timestamp header (`### 🎙️ [메모 기록] YYYY-MM-DD HH:MM KST`).
+  - POSIX-compliant atomic file writing using temporary files (`.{filename}.tmp`) and `os.replace`.
+- **First-Line Value Delivery & Rich Status Prefixes (`daemon_v2.py`, `core/google_tasks.py`)**:
+  - Formatted Google Tasks notes to present `👉 선택지: 1. ... | 2. ...` on the very first line for immediate consumption in mobile preview notifications and seamless conversational chaining in mobile Gemini.
+  - Enhanced task status prefixes (`[✅완료: ...]`, `[❌오류: ...]`, `[🔍검토: ...]`, `[💡기획: ...]`, `[📝메모기록: ...]`, `[✅테스트: PASS]`, `[❌테스트: FAIL]`).
+  - Expanded `PROCESSED_PREFIXES` to prevent daemon polling loops when tasks remain in `needsAction` status.
+- **Comprehensive Unit Testing**:
+  - Added 14 new unit tests across `tests/test_path_resolver.py`, `tests/test_executor_read.py`, `tests/test_intent_analyzer.py`, and `tests/test_executor_write.py`.
+  - All 127 unit tests pass 100% in ~7.0s.
+
+---
+
 ## [2.1.18] - 2026-09-13
 
 ### Changed & Improved

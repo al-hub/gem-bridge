@@ -109,10 +109,15 @@ class IntentAnalyzer:
         if kv_result:
             return kv_result
 
-        # 3. Check for explicit command prefixes (!분석, !작업, !실행)
+        # 3. Check for Approval Interceptor in continuous sessions
+        approval_result = self._intercept_approval(raw_text_clean, title, available_repos, session_context)
+        if approval_result:
+            return approval_result
+
+        # 4. Check for explicit command prefixes (!분석, !작업, !실행)
         command_hint = self._detect_command_prefix(title, raw_text_clean)
 
-        # 4. LLM structured analysis with gemini-3.6-flash
+        # 5. LLM structured analysis with gemini-3.6-flash
         if not self.client:
             logger.warning("Gemini Client not initialized (missing API key). Falling back to default READ intent.")
             return self._build_fallback_read_intent(combined_text, available_repos, "Missing API Key")
@@ -122,12 +127,82 @@ class IntentAnalyzer:
             full_prompt_text = f"{session_context.strip()}\n\n[현재 신규 사용자 지시]\n{combined_text}"
 
         try:
-            return self._analyze_with_llm(full_prompt_text, available_repos, command_hint)
+            return self._analyze_with_llm(
+                full_prompt_text, available_repos, command_hint, session_context=session_context
+            )
         except Exception as e:
             logger.error(f"Failed to analyze intent with LLM: {e}. Falling back to safe READ intent.")
             return self._build_fallback_read_intent(
                 combined_text, available_repos, f"LLM parsing error fallback: {e}"
             )
+
+    APPROVAL_KEYWORDS = (
+        "승인", "!승인", "머지", "!머지", "1번 머지", "1번 머지해줘", "머지해줘",
+        "이대로 반영해줘", "반영해줘", "적용해줘", "진행해줘", "1번 반영해줘", "확정해줘"
+    )
+
+    def _intercept_approval(
+        self,
+        raw_text: str,
+        title: str,
+        available_repos: List[str],
+        session_context: Optional[str] = None
+    ) -> Optional[IntentAnalysisResult]:
+        """
+        Intercepts short confirmation or approval commands ("승인", "1번 머지", "이대로 반영해줘")
+        when an active session has recent context, routing directly to WRITE (or appropriate task)
+        instead of degrading to READ due to lack of target path in single-word inputs.
+        """
+        if not session_context or not session_context.strip():
+            return None
+
+        combined = f"{title} {raw_text}".strip().lower()
+        cleaned = re.sub(r"\[[^\]]*\]", "", combined).strip()
+
+        is_approval = False
+        for kw in self.APPROVAL_KEYWORDS:
+            if cleaned == kw.lower() or cleaned.startswith(kw.lower()):
+                is_approval = True
+                break
+
+        if not is_approval:
+            return None
+
+        # Extract repo from session context or available repos
+        repo = self.default_repo
+        repo_match = re.search(r"\*\*대상 저장소\*\*:\s*`([^`]+)`", session_context)
+        if repo_match:
+            cand_repo = repo_match.group(1).strip()
+            if cand_repo in available_repos or cand_repo.startswith("http"):
+                repo = cand_repo
+        else:
+            for r in available_repos:
+                if r.lower() in combined:
+                    repo = r
+                    break
+
+        # Extract target_path from session context
+        target_path = None
+        file_match = re.search(r"\*\*(?:대상 파일|최근 수정된 파일 목록)\*\*:\s*`([^`]+)`", session_context)
+        if file_match:
+            target_path = file_match.group(1).split(",")[0].strip().strip("`")
+
+        if not target_path:
+            return None
+
+        logger.info(
+            f"[ApprovalInterceptor] Intercepted approval '{cleaned}' for repo '{repo}', target_path '{target_path}'"
+        )
+        return IntentAnalysisResult(
+            task_type=TaskType.WRITE,
+            target_repo=repo,
+            summary=f"승인에 따른 반영: {target_path}",
+            target_path=target_path,
+            instruction="사용자의 승인에 따라 이전 제안된 변경사항을 최종 반영합니다.",
+            commit_message=f"apply: approve and apply changes for {target_path}",
+            model_tier="deep",
+            reasoning=f"ApprovalInterceptor: Detected user approval '{cleaned}' in continuous session context."
+        )
 
     def _extract_raw_key_value(
         self, text: str, available_repos: List[str]
@@ -287,7 +362,8 @@ class IntentAnalyzer:
         self,
         full_text: str,
         available_repos: List[str],
-        command_hint: Optional[TaskType] = None
+        command_hint: Optional[TaskType] = None,
+        session_context: Optional[str] = None
     ) -> IntentAnalysisResult:
         hint_instruction = ""
         if command_hint:
@@ -359,6 +435,15 @@ class IntentAnalyzer:
         # Enforce safety guardrail: Default is unconditionally READ
         if result.task_type == TaskType.WRITE:
             has_actionable_spec = bool(result.content or result.instruction or result.source_path)
+            if (not result.target_path or not has_actionable_spec) and session_context:
+                matched_file = re.search(r"\*\*(?:대상 파일|최근 수정된 파일 목록)\*\*:\s*`([^`]+)`", session_context)
+                if matched_file:
+                    if not result.target_path:
+                        result.target_path = matched_file.group(1).split(",")[0].strip().strip("`")
+                    if not has_actionable_spec:
+                        result.instruction = "이전 세션의 연속 작업 지침에 따라 반영합니다."
+                    has_actionable_spec = True
+
             if not result.target_path or not has_actionable_spec:
                 logger.warning(
                     f"Downgrading WRITE task to READ: missing target_path or actionable spec. Path={result.target_path}"

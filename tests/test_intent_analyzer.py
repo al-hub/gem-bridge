@@ -133,6 +133,41 @@ commit_message: feat: update landing page
             self.assertIn("불변 고정 메타데이터", called_contents)
             self.assertIn("auth/login.py", called_contents)
 
+    def test_approval_interceptor_single_word(self):
+        session_ctx = (
+            "### 🔒 [불변 고정 메타데이터 (Pinned Facts)]\n"
+            "- **대상 저장소**: `remote_codex`\n"
+            "- **최근 수정된 파일 목록**: `src/auth.py`\n"
+            "- **최신 커밋**: `7c4a1b2`\n"
+        )
+        # Even without mocking generate_content, ApprovalInterceptor resolves immediately
+        result = self.analyzer.analyze(
+            raw_text="승인",
+            title="승인",
+            available_repos=["remote_codex", "gem-bridge"],
+            session_context=session_ctx
+        )
+        self.assertEqual(result.task_type, TaskType.WRITE)
+        self.assertEqual(result.target_repo, "remote_codex")
+        self.assertEqual(result.target_path, "src/auth.py")
+        self.assertIn("ApprovalInterceptor", result.reasoning)
+
+    def test_approval_interceptor_merge_phrase(self):
+        session_ctx = (
+            "### ⚡ [직전 연속 작업 세부 맥락]\n"
+            "- **대상 저장소**: `remote_codex`\n"
+            "- **대상 파일**: `src/auth.py`\n"
+        )
+        result = self.analyzer.analyze(
+            raw_text="1번 머지해줘",
+            title="1번 머지해줘",
+            available_repos=["remote_codex", "gem-bridge"],
+            session_context=session_ctx
+        )
+        self.assertEqual(result.task_type, TaskType.WRITE)
+        self.assertEqual(result.target_repo, "remote_codex")
+        self.assertEqual(result.target_path, "src/auth.py")
+
 
 if __name__ == "__main__":
     unittest.main()

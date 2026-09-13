@@ -10,7 +10,11 @@ TASKS_SCOPE = "https://www.googleapis.com/auth/tasks"
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 COMBINED_SCOPES = [DRIVE_SCOPE, TASKS_SCOPE]
 
-PROCESSED_PREFIXES = ("[✅완료", "[❌오류", "[⏳진행", "[✅", "[❌")
+PROCESSED_PREFIXES = (
+    "[✅완료", "[❌오류", "[⏳진행", "[⏳대기",
+    "[🔍검토", "[💡기획", "[📝메모", "[📌세션",
+    "[✅", "[❌", "[🔍", "[💡", "[📝", "[⏳"
+)
 MAX_NOTES_LENGTH = 8000
 
 
@@ -149,16 +153,22 @@ class GoogleTasksManager:
             return False
 
         try:
-            clean_title = title.strip()
-            if clean_title.startswith("[✅") or clean_title.startswith("[❌"):
-                new_title = clean_title[:1024]
+            raw_title = title.strip()
+            # If title has transient prefix like [⏳, or simple [✅완료]/[❌오류], strip to base title
+            clean_title = raw_title
+            for p in ["[⏳진행]", "[⏳대기]", "[⏳", "[✅완료]", "[❌오류]", "[✅", "[❌"]:
+                if clean_title.startswith(p):
+                    if "]" in clean_title:
+                        clean_title = clean_title.split("]", 1)[1].strip()
+                    else:
+                        clean_title = clean_title[len(p):].strip()
+                    break
+
+            if not is_success and not raw_title.startswith("[❌"):
+                new_title = f"[❌오류] {clean_title}"[:1024]
+            elif any(raw_title.startswith(p) for p in ["[✅", "[❌", "[🔍", "[💡", "[📝"]):
+                new_title = raw_title[:1024]
             else:
-                for p in PROCESSED_PREFIXES:
-                    if clean_title.startswith(p):
-                        if "]" in clean_title:
-                            clean_title = clean_title.split("]", 1)[1].strip()
-                        else:
-                            clean_title = clean_title[len(p):].strip()
                 prefix = "[✅완료]" if is_success else "[❌오류]"
                 new_title = f"{prefix} {clean_title}"[:1024]
 
