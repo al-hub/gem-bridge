@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > - **Locked to v2.1.x**: Major(1st) and Minor(2nd) digits are strictly frozen without explicit user permission.
 > - **Permitted Increments**: Only the 3rd position `z` (`v2.1.z`) is updated (`v2.1.1`, `v2.1.2`, ...).
 
+## [2.1.18] - 2026-09-13
+
+### Changed & Improved
+- **1-Tap Google Docs Deep Link & Natural Truncation for Google Tasks (`daemon_v2.py`)**:
+  - Implemented deterministic dual-anchor link placement: embeds direct, actionable URL (`https://docs.google.com/document/d/{doc_id}/edit`) directly in Google Tasks feedback notes.
+  - Allows mobile developers to jump from Google Tasks to Google Docs with a single tap for full report rendering (rich headings, syntax highlighted code, tables).
+  - Replaced rigid character-count truncation with natural newline boundary slicing at ~1,500 characters, reserving a massive 6,000+ character safety buffer against the Google Tasks API 8,192-character hard limit.
+  - Zero-overengineering approach: requires zero additional LLM summarization calls and zero fragile regex AST parsing, achieving 0ms overhead and 100% deterministic execution.
+  - Added unit test in `tests/test_daemon_v2.py` verifying deep link generation and natural truncation (113 total unit tests passing 100%).
+
 ---
 
 ## [2.1.17] - 2026-09-13

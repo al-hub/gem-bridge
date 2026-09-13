@@ -1259,22 +1259,31 @@ class GemBridgeDaemonV2:
                                 trace_id=trace_id,
                             )
 
+                        doc_id = (result.get("doc_id") or "").strip()
+                        doc_name = result.get("doc_name") or "분석 보고서"
+                        has_valid_link = bool(doc_id and doc_id not in ("mock_id", "None"))
+                        docs_url_line = f"🔗 Docs 열기: https://docs.google.com/document/d/{doc_id}/edit" if has_valid_link else f"Google Drive: {doc_name}"
+
                         report_text = result.get('report') or result.get('preview', '')
-                        clean_preview = report_text.replace("```", "").replace("###", "").replace("##", "").replace("#", "").strip()
-                        if len(clean_preview) > 2500:
-                            clean_preview = clean_preview[:2500] + "\n...(이하 생략)..."
+                        clean_preview = report_text.replace("```", "").replace("**", "").replace("### ", "■ ").replace("## ", "▶ ").replace("# ", "").strip()
+                        if len(clean_preview) > 1500:
+                            cut_idx = clean_preview[:1500].rfind("\n")
+                            cut_idx = cut_idx if cut_idx > 1000 else 1500
+                            clean_preview = clean_preview[:cut_idx].rstrip() + "\n...(이하 생략, 전체 내용은 위 Docs 링크 참조)..."
 
                         turn_num = len(session.turns) if session else 1
                         session_badge = f"\n[📌 세션: {intent.target_repo} ({turn_num}턴 진행 중 / 30분 유효)]\n" if session else ""
 
                         feedback_notes = (
                             f"[분석 완료] {intent.target_repo}\n"
-                            f"주제: {intent.summary}\n{session_badge}\n"
+                            f"주제: {intent.summary}\n"
+                            f"{docs_url_line}\n{session_badge}\n"
                             f"[보고서 요약]\n"
                             f"{clean_preview}\n\n"
                             f"[전체 보고서 안내]\n"
-                            f"Google Drive: {result.get('doc_name')}"
-                        )
+                            f"Google Drive: {doc_name}\n"
+                            f"{docs_url_line if has_valid_link else ''}"
+                        ).strip()
                         repo_short = intent.target_repo or "분석"
                         summary_msg = intent.summary or "아키텍처 분석"
                         rich_title = f"[✅완료: 분석] {repo_short} - {summary_msg}"[:120]

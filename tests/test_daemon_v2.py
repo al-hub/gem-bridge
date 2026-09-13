@@ -395,7 +395,38 @@ class TestDaemonV2(unittest.TestCase):
         self.assertEqual(call_kwargs["title"], "[✅완료: 분석] gem-bridge - 전체 구조 분석")
         self.assertIn("[분석 완료] gem-bridge", call_kwargs["feedback_notes"])
         self.assertIn("[전체 보고서 안내]", call_kwargs["feedback_notes"])
+        self.assertIn("https://docs.google.com/document/d/rep_99/edit", call_kwargs["feedback_notes"])
         self.daemon._sync_task_result_to_console.assert_not_called()
+
+    def test_check_and_process_google_tasks_read_truncates_long_report(self):
+        mock_tasks_mgr = MagicMock()
+        mock_tasks_mgr.is_available = True
+        mock_tasks_mgr.list_pending_tasks.return_value = [
+            {"id": "gtask_long_01", "title": "gem-bridge 긴 보고서 테스트", "notes": ""}
+        ]
+        self.daemon.tasks_manager = mock_tasks_mgr
+        self.daemon.intent_analyzer.analyze = MagicMock(return_value=IntentAnalysisResult(
+            task_type=TaskType.READ,
+            target_repo="gem-bridge",
+            summary="긴 보고서 테스트",
+            query="분석해줘"
+        ))
+        self.daemon.repo_manager.prepare_repo = MagicMock(return_value="/tmp/dummy-gem-bridge")
+        
+        long_content = "줄 1: 상세 분석 내용 시작입니다.\n" + ("가" * 50 + "\n") * 40 + "마지막 줄입니다."
+        self.daemon.read_executor.execute = MagicMock(return_value={
+            "status": "success", "doc_name": "[보고서] 긴 보고서", "doc_id": "doc_long_888",
+            "preview": long_content[:500],
+            "report": long_content
+        })
+
+        self.daemon.check_and_process_google_tasks()
+
+        mock_tasks_mgr.update_task_with_feedback.assert_called_once()
+        call_kwargs = mock_tasks_mgr.update_task_with_feedback.call_args[1]
+        self.assertIn("https://docs.google.com/document/d/doc_long_888/edit", call_kwargs["feedback_notes"])
+        self.assertIn("...(이하 생략, 전체 내용은 위 Docs 링크 참조)...", call_kwargs["feedback_notes"])
+
 
     def test_check_and_process_google_tasks_error(self):
         mock_tasks_mgr = MagicMock()
