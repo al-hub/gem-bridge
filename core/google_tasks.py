@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional
 from googleapiclient.discovery import Resource, build
@@ -16,6 +17,76 @@ PROCESSED_PREFIXES = (
     "[✅", "[❌", "[🔍", "[💡", "[📝", "[⏳"
 )
 MAX_NOTES_LENGTH = 8000
+MAX_SAFE_NOTES_LENGTH = 7500
+MAX_BODY_LENGTH = 6500
+MAX_RETIRE_PER_CYCLE = 3
+RETIRE_API_PACING_SEC = 0.25
+
+WATERMARK_PATTERN = re.compile(
+    r"<!--\s*GEM_BRIDGE:v=(?P<version>\d+):channel=(?P<channel>[^:]+):repo=(?P<repo>[^:\s]+)(?::trace=(?P<trace>[^:\s]+))?\s*-->"
+)
+TITLE_PREFIX_PATTERN = re.compile(
+    r"^\[(✅완료|❌오류|⏳진행|📝메모|✅테스트|❌테스트|🔍검토|💡기획|✅|❌|🔍|💡|📝)"
+)
+
+
+class SafeMarkdownTruncator:
+    """
+    Safely truncates markdown text at newline/sentence boundaries while
+    guaranteeing that any unclosed fenced code blocks (```) are automatically balanced.
+    """
+
+    @staticmethod
+    def truncate_body(text: str, max_length: int = MAX_BODY_LENGTH) -> str:
+        if not text:
+            return ""
+        text = text.strip()
+        if len(text) <= max_length:
+            return text
+
+        cut_index = text[:max_length].rfind("\n")
+        if cut_index < int(max_length * 0.7):
+            cut_index = text[:max_length].rfind(" ")
+            if cut_index < int(max_length * 0.7):
+                cut_index = max_length
+
+        truncated = text[:cut_index].rstrip()
+        # Ensure code block backticks are balanced
+        if truncated.count("```") % 2 != 0:
+            truncated += "\n```\n...(이하 코드 생략, 전체 내용은 상단 Docs 참조)..."
+        else:
+            truncated += "\n...(이하 내용 생략, 전체 내용은 상단 Docs 참조)..."
+        return truncated
+
+
+class TaskWatermark:
+    """
+    Injects and extracts machine-readable electronic signatures into Google Tasks notes.
+    Prevents any deletion or modification of the user's personal to-do items.
+    """
+
+    @staticmethod
+    def generate(repo: str, channel: str = "tasks", trace_id: str = "") -> str:
+        normalized = TaskWatermark.normalize_repo(repo)
+        return f"\n\n<!-- GEM_BRIDGE:v=2:channel={channel}:repo={normalized}:trace={trace_id} -->"
+
+    @staticmethod
+    def extract(notes: str) -> Optional[Dict[str, str]]:
+        if not notes:
+            return None
+        m = WATERMARK_PATTERN.search(notes)
+        return m.groupdict() if m else None
+
+    @staticmethod
+    def normalize_repo(repo_str: str) -> str:
+        if not repo_str:
+            return "gem-bridge"
+        name = repo_str.strip().lower()
+        if name.endswith(".git"):
+            name = name[:-4]
+        if "/" in name:
+            name = name.split("/")[-1]
+        return name or "gem-bridge"
 
 
 class GoogleTasksManager:
@@ -254,3 +325,105 @@ class GoogleTasksManager:
         except Exception as e:
             logger.error(f"Failed to archive stale Google Tasks: {e}")
             return archived_count
+
+    def retire_previous_tasks(
+        self,
+        target_repo: str,
+        current_task_id: str,
+        tasklist_id: str = "@default"
+    ) -> int:
+        """
+        Guarantees the 1-Repo 1-Active Invariant:
+        Retires previous needsAction tasks for the same target_repo so mobile Gemini
+        searches only ever find exactly 1 active task per repository.
+
+        Strict 4-Factor Qualification Guard:
+        1. Task ID is not current_task_id
+        2. Task title is not in-flight ([⏳진행])
+        3. Task has processed prefix or watermark
+        4. Matches target_repo via watermark metadata or strict title format
+        """
+        if not self.is_available or not self.service:
+            return 0
+
+        retired_count = 0
+        normalized_target = TaskWatermark.normalize_repo(target_repo)
+
+        try:
+            results = self.service.tasks().list(
+                tasklist=tasklist_id,
+                showCompleted=False,
+                showHidden=False,
+                maxResults=20
+            ).execute()
+
+            now_iso = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+            for item in results.get("items", []):
+                t_id = item.get("id")
+                if not t_id or t_id == current_task_id:
+                    continue
+
+                title = (item.get("title") or "").strip()
+                notes = item.get("notes") or ""
+
+                # [Guard 1] Never retire in-flight tasks
+                if title.startswith("[⏳진행]"):
+                    continue
+
+                # [Guard 2] Watermark verification (Zero-Data-Loss for user personal to-dos)
+                meta = TaskWatermark.extract(notes)
+                is_gem_bridge_task = False
+                if meta:
+                    if TaskWatermark.normalize_repo(meta.get("repo", "")) == normalized_target:
+                        is_gem_bridge_task = True
+                else:
+                    # Fallback for legacy tasks prior to watermark: check strict title format and notes markers
+                    title_match = any(title.startswith(p) for p in PROCESSED_PREFIXES) and (
+                        f" {normalized_target} - " in title.lower() or f"] {normalized_target} " in title.lower() or f": {normalized_target}]" in title.lower()
+                    )
+                    notes_match = any(sig in notes for sig in ["📢 [Gemini", "👉 추천 다음 작업", "👉 다음 추천 작업", "👉 선택지:", "🔗 Docs 열기", "🔗 전체"])
+                    if title_match and notes_match:
+                        is_gem_bridge_task = True
+
+                if not is_gem_bridge_task:
+                    continue
+
+                # Soft-Retire (completed=True)
+                try:
+                    self.service.tasks().patch(
+                        tasklist=tasklist_id,
+                        task=t_id,
+                        body={
+                            "id": t_id,
+                            "status": "completed",
+                            "completed": now_iso
+                        }
+                    ).execute()
+                    retired_count += 1
+                    logger.info(f"[1-Repo 1-Active] Soft-retired prior task '{t_id}' ({title}) for repo '{target_repo}'.")
+                    if retired_count >= MAX_RETIRE_PER_CYCLE:
+                        break
+                    time.sleep(RETIRE_API_PACING_SEC)
+                except HttpError as api_err:
+                    if api_err.resp.status in (429, 403, 500, 503):
+                        logger.warning(f"[Seamless Tasks] Rate limit/API error during retire: {api_err}. Aborting batch.")
+                        break
+                except Exception as patch_err:
+                    logger.warning(f"[Seamless Tasks] Failed to retire task {t_id}: {patch_err}")
+
+            return retired_count
+        except Exception as e:
+            logger.warning(f"[Seamless Tasks] Task retirement failed gracefully: {e}")
+            return retired_count
+
+    def delete_task(self, task_id: str, tasklist_id: str = "@default") -> bool:
+        """Explicit hard delete helper for test cleanup or administrative tasks."""
+        if not self.is_available or not self.service:
+            return False
+        try:
+            self.service.tasks().delete(tasklist=tasklist_id, task=task_id).execute()
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to delete Google Task '{task_id}': {e}")
+            return False
+

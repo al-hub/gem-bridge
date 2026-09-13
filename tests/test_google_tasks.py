@@ -215,6 +215,55 @@ class TestGoogleTasksManager(unittest.TestCase):
         self.assertEqual(patch_kwargs["task"], "t_stale")
         self.assertEqual(patch_kwargs["body"]["status"], "completed")
 
+    def test_task_watermark_create_and_extract(self):
+        from core.google_tasks import TaskWatermark
+        wm = TaskWatermark.generate(repo="kum", trace_id="trace_123")
+        self.assertIn("<!-- GEM_BRIDGE:v=2:channel=tasks:repo=kum:trace=trace_123 -->", wm)
+        parsed = TaskWatermark.extract(f"Some notes\n{wm}\nTail notes")
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["repo"], "kum")
+        self.assertEqual(parsed["trace"], "trace_123")
+        self.assertEqual(parsed["version"], "2")
+
+    def test_safe_markdown_truncator_balances_code_blocks(self):
+        from core.google_tasks import SafeMarkdownTruncator
+        unclosed = "Header\n```python\nline 1\nline 2\nline 3"
+        truncated_unclosed = SafeMarkdownTruncator.truncate_body(unclosed, max_length=25)
+        self.assertIn("```", truncated_unclosed)
+
+    @patch("core.google_tasks.build")
+    def test_retire_previous_tasks_qualifies_only_matching_watermark(self, mock_build):
+        from core.google_tasks import TaskWatermark
+        mock_service = MagicMock()
+        mock_build.return_value = mock_service
+        mock_tasks_resource = mock_service.tasks.return_value
+
+        wm_kum = TaskWatermark.generate(repo="kum", trace_id="t_old_trace")
+        wm_gem = TaskWatermark.generate(repo="gem-bridge", trace_id="t_gem_trace")
+
+        mock_tasks_resource.list.return_value.execute.return_value = {
+            "items": [
+                # Matching old task for kum -> should retire
+                {"id": "t_kum_old", "title": "[✅완료: 분석] kum - 진목", "notes": f"내용\n{wm_kum}", "status": "needsAction"},
+                # Current task -> should skip
+                {"id": "t_kum_current", "title": "[✅완료: 분석] kum - 최신", "notes": f"내용\n{wm_kum}", "status": "needsAction"},
+                # Other repo task -> should skip
+                {"id": "t_gem", "title": "[✅완료] gem-bridge", "notes": f"내용\n{wm_gem}", "status": "needsAction"},
+                # Personal user task -> should NEVER touch
+                {"id": "t_user", "title": "치과 예약 15시", "notes": "강남역 치과", "status": "needsAction"},
+            ]
+        }
+        mock_tasks_resource.patch.return_value.execute.return_value = {"id": "t_kum_old"}
+
+        manager = GoogleTasksManager(credentials=self.mock_creds)
+        retired = manager.retire_previous_tasks(target_repo="kum", current_task_id="t_kum_current")
+
+        self.assertEqual(retired, 1)
+        mock_tasks_resource.patch.assert_called_once()
+        patch_kwargs = mock_tasks_resource.patch.call_args[1]
+        self.assertEqual(patch_kwargs["task"], "t_kum_old")
+        self.assertEqual(patch_kwargs["body"]["status"], "completed")
+
 
 if __name__ == "__main__":
     unittest.main()

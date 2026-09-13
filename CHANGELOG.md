@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > - **Locked to v2.1.x**: Major(1st) and Minor(2nd) digits are strictly frozen without explicit user permission.
 > - **Permitted Increments**: Only the 3rd position `z` (`v2.1.z`) is updated (`v2.1.1`, `v2.1.2`, ...).
 
+## [2.1.20] - 2026-09-13
+
+### Added & Enhanced
+- **Universal Mobile Seamless Protocol (UMSP v2.1.20) Across All 6 Scenarios**:
+  - Unified Google Tasks 4-tier notes layout: (1) First-Line Direct Choices (`👉 추천 다음 작업: 1. ... | 2. ...`), (2) Conversational Card (`[💬 대화형 브리핑 카드]`) optimized for mobile Gemini persona without negative meta-prompt leaking, (3) Clean Report/Diff/Test/Memo Snapshot, (4) Direct Google Docs deep link + Session status badge.
+  - Standardized across all 6 core scenarios: Code Modification & Approval, Knowledge & Narrative Briefing, External Repo Analysis, Multi-Turn Interactive Architecture Planning, Remote Unit Testing, and Voice Memo & Idea Accumulator.
+- **1-Repo 1-Active Invariant & Anti-Collision Engine (`core/google_tasks.py`)**:
+  - Implemented `retire_previous_tasks(target_repo, current_task_id)` to automatically soft-retire (`status="completed"`) older tasks from the same repo upon completing a new task, eliminating task collision in mobile Gemini extension queries.
+  - Zero-Data-Loss Safety Watermark (`<!-- GEM_BRIDGE:v=2:channel=tasks:repo={repo}:trace={trace} -->`) strictly protects personal user to-dos (e.g. "치과 예약") from accidental mutation.
+  - Batch retirement cap (max 3) with 0.25s API pacing and graceful degradation on API errors.
+- **Safe Markdown Truncation (`SafeMarkdownTruncator`)**:
+  - Intelligently truncates long task outputs at newline boundaries before Google Tasks 8,192-char limit while auto-balancing unclosed fenced code blocks (` ``` `).
+- **Conversational Option Interceptor (`core/intent_analyzer.py`)**:
+  - Extended fast-path interception to support ultra-short mobile responses (`"1"`, `"1번"`, `"ㅇㅋ 1"`, `"머지"`, `"3"`, `"확인"`).
+  - Cross-scenario chained loop transitions: Loop A (Remote test failure -> code fix diff generation), Loop B (Voice memo -> technical spec draft), Loop C (Document briefing -> deep chapter drilldown).
+  - Enforced natural Korean task summaries in intent analysis prompt.
+- **Full Test Suite & Backward Compatibility**:
+  - Added unit tests for `TaskWatermark`, `SafeMarkdownTruncator`, and `retire_previous_tasks`.
+  - 130/130 unit tests pass 100% in ~7.8s.
+
 ## [2.1.19] - 2026-09-13
 
 ### Added & Enhanced

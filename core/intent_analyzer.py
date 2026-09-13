@@ -28,7 +28,7 @@ class IntentAnalysisResult(BaseModel):
     )
     summary: str = Field(
         ...,
-        description="Concise summary of the user's intent"
+        description="Concise one-line summary in natural Korean (예: 'kum 저장소의 jinmok-odyssey-memory.md 내용 요약', 영문 사용 금지)"
     )
     query: Optional[str] = Field(
         None,
@@ -138,7 +138,12 @@ class IntentAnalyzer:
 
     APPROVAL_KEYWORDS = (
         "승인", "!승인", "머지", "!머지", "1번 머지", "1번 머지해줘", "머지해줘",
-        "이대로 반영해줘", "반영해줘", "적용해줘", "진행해줘", "1번 반영해줘", "확정해줘"
+        "이대로 반영해줘", "반영해줘", "적용해줘", "진행해줘", "1번 반영해줘", "확정해줘",
+        "1", "1번", "1번 해줘", "1번 진행", "ㅇㅋ 1", "1 고", "1 ㄱ", "1번 선택", "1번 실행"
+    )
+
+    COMPLETION_KEYWORDS = (
+        "3", "3번", "확인", "확인완료", "확인 완료", "완료", "끝", "패스", "종료", "ok", "done", "3번 선택"
     )
 
     def _intercept_approval(
@@ -149,8 +154,8 @@ class IntentAnalyzer:
         session_context: Optional[str] = None
     ) -> Optional[IntentAnalysisResult]:
         """
-        Intercepts short confirmation or approval commands ("승인", "1번 머지", "이대로 반영해줘")
-        when an active session has recent context, routing directly to WRITE (or appropriate task)
+        Intercepts short confirmation or approval commands ("승인", "1번 머지", "1", "1번", "3", "확인")
+        when an active session has recent context, routing directly to the appropriate task
         instead of degrading to READ due to lack of target path in single-word inputs.
         """
         if not session_context or not session_context.strip():
@@ -158,15 +163,6 @@ class IntentAnalyzer:
 
         combined = f"{title} {raw_text}".strip().lower()
         cleaned = re.sub(r"\[[^\]]*\]", "", combined).strip()
-
-        is_approval = False
-        for kw in self.APPROVAL_KEYWORDS:
-            if cleaned == kw.lower() or cleaned.startswith(kw.lower()):
-                is_approval = True
-                break
-
-        if not is_approval:
-            return None
 
         # Extract repo from session context or available repos
         repo = self.default_repo
@@ -180,6 +176,69 @@ class IntentAnalyzer:
                 if r.lower() in combined:
                     repo = r
                     break
+
+        # Check for Option 3 / Completion keywords (Inbox Zero)
+        for kw in self.COMPLETION_KEYWORDS:
+            if cleaned == kw.lower() or cleaned.startswith(f"{kw.lower()} "):
+                return IntentAnalysisResult(
+                    task_type=TaskType.READ,
+                    target_repo=repo,
+                    summary="작업 확인 완료 및 세션 정리",
+                    query="작업 확인 완료",
+                    reasoning="OptionInterceptor: User selected Option 3 (Confirmation/Complete)."
+                )
+
+        is_approval = False
+        for kw in self.APPROVAL_KEYWORDS:
+            if cleaned == kw.lower() or cleaned.startswith(kw.lower()):
+                is_approval = True
+                break
+
+        if not is_approval:
+            return None
+
+        # Cross-Scenario Routing 1: Memo (S6) -> Spec Draft (S4)
+        if "daily-note.md" in session_context and any(k in combined for k in ["기획", "초안", "spec", "스펙", "1", "1번"]):
+            return IntentAnalysisResult(
+                task_type=TaskType.WRITE,
+                target_repo=repo,
+                summary="일일 메모 기반 기술 기획서 초안 작성",
+                target_path="docs/specs.md",
+                source_path="daily-note.md",
+                instruction="daily-note.md에 기록된 최근 아이디어 메모를 바탕으로 docs/specs.md에 기술 기획서 초안을 작성합니다.",
+                commit_message="docs: draft technical specifications from daily notes",
+                model_tier="deep",
+                reasoning="OptionInterceptor: Chained transition from memo (S6) to spec draft (S4)."
+            )
+
+        # Cross-Scenario Routing 2: Failed Unit Test (S5) -> Fix Diff (S1)
+        test_fail_match = re.search(r"FAILED\s+([^\s:]+)::([^\s\-]+)", session_context)
+        if not test_fail_match:
+            test_fail_match = re.search(r"(?:tests/[^\s]+\.py)", session_context)
+        if ("failed" in session_context.lower() or "실패" in session_context) and any(k in combined for k in ["수정", "fix", "1", "1번"]):
+            failing_file = test_fail_match.group(0) if test_fail_match else "tests/"
+            return IntentAnalysisResult(
+                task_type=TaskType.WRITE,
+                target_repo=repo,
+                summary=f"실패한 단위 테스트 수정안 생성: {failing_file}",
+                target_path=failing_file,
+                instruction="직전 실행에서 실패한 단위 테스트와 관련 소스코드를 분석하여 테스트가 통과하도록 수정합니다.",
+                commit_message=f"fix: fix failing test {failing_file}",
+                model_tier="deep",
+                reasoning="OptionInterceptor: Chained transition from failed test (S5) to bug fix (S1)."
+            )
+
+        # Cross-Scenario Routing 3: Hero Document Drill-down (S2)
+        if "jinmok-odyssey-memory.md" in session_context and any(k in combined for k in ["시련", "화천", "상세", "1", "1번"]):
+            hero_doc = "family/jinmok-odyssey-memory.md"
+            return IntentAnalysisResult(
+                task_type=TaskType.READ,
+                target_repo=repo,
+                summary="진목 오디세이 2번째 시련 및 주요 여정 심층 분석",
+                query="진목 오디세이 2번째 시련(화천) 및 신화 대조 상세 분석",
+                target_files_or_dirs=[hero_doc],
+                reasoning="OptionInterceptor: Chained transition for Hero Document drill-down (S2)."
+            )
 
         # Extract target_path from session context
         target_path = None
@@ -392,6 +451,9 @@ class IntentAnalyzer:
    - '!분석' -> READ
    - '!작업' -> WRITE (단, target_path와 content/instruction이 모두 누락된 경우에만 READ로 강등)
    - '!실행' -> EXEC
+4. summary 언어 규칙 (절대 준수):
+   - summary는 반드시 자연스러운 한국어로 명확하게 작성하세요 (영문 문장 사용 금지).
+   - 예: 'kum 저장소의 jinmok-odyssey-memory.md 내용 요약', 'auth.py 토큰 만료 예외 처리 수정', '단위 테스트 전체 실행'
 
 [입력 문서 원문]
 {full_text}

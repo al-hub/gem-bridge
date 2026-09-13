@@ -1,6 +1,6 @@
-# gem-bridge (v2.1.19 Core Architecture)
+# gem-bridge (v2.1.20 Core Architecture)
 
-> **스마트폰의 Google Gemini 모바일 앱 및 Google Docs와 로컬/원격 Git 저장소를 유기적으로 연결하는 모듈형 에이전트 브리지 시스템**
+> **스마트폰의 Google Gemini 모바일 앱 및 Google Tasks/Docs와 로컬/원격 Git 저장소를 유기적으로 연결하는 전 시나리오 공용 모바일 심리스(UMSP) 에이전트 브리지 시스템**
 
 단일 스크립트 구조를 탈피하여 **Dispatcher-Executor 패턴**과 **Read/Write 물리적 분리 및 안전 가드레일**을 완벽하게 구축한 v2 아키텍처입니다.
 

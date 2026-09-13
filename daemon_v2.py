@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import signal
 import sys
 import time
@@ -27,7 +28,7 @@ from core.console_protocol import (
 from core.telemetry import TimeTagFormatter, PipelineProfiler
 from core.drive_storage import DriveStorageManager
 from core.janitor import StorageJanitor
-from core.google_tasks import GoogleTasksManager
+from core.google_tasks import GoogleTasksManager, TaskWatermark, SafeMarkdownTruncator
 from core.session_manager import SessionManager, TurnType
 
 
@@ -1107,13 +1108,15 @@ class GemBridgeDaemonV2:
             body = {"name": doc_title, "mimeType": "application/vnd.google-apps.document"}
             if target_parent:
                 body["parents"] = [target_parent]
-            self.drive_service.files().create(
+            created = self.drive_service.files().create(
                 body=body,
                 media_body=media,
                 fields="id, name"
             ).execute()
+            return created.get("id")
         except Exception as e:
             logger.warning(f"Could not upload completion doc: {e}")
+            return None
 
     def _handle_task_error(self, doc_id: str, doc_name: str, error: Exception, parent_id: Optional[str] = None):
         """Safely logs error and creates an error document on Google Drive without crashing."""
@@ -1163,6 +1166,56 @@ class GemBridgeDaemonV2:
             )
         except Exception as upload_err:
             logger.error(f"Failed to create error document on Drive: {upload_err}")
+
+    @staticmethod
+    def _build_universal_feedback_notes(
+        first_line_choices: str,
+        badge: str,
+        target_entity: str,
+        summary_one_liner: str,
+        docs_url_line: str,
+        session_badge: str,
+        body_header: str,
+        body_content: str,
+        target_repo: str,
+        trace_id: str = ""
+    ) -> str:
+        """
+        Builds the 4-tier Universal Mobile Seamless Notes:
+        Tier 1: First-line choices (👉 다음 추천 작업)
+        Tier 2: Conversational Briefing Card ([💬 대화형 브리핑 카드] - Anti-Leaking)
+        Tier 3: Content-First Snapshot with SafeMarkdownTruncator
+        Tier 4: Deep Link & Session Badge & Watermark
+        """
+        # Sanitize any local absolute paths from user view to prevent AI safety trigger
+        clean_entity = target_entity.replace("/home/al-hub/workspace/", "")
+        clean_summary = summary_one_liner.replace("/home/al-hub/workspace/", "")
+        clean_body = body_content.replace("/home/al-hub/workspace/", "")
+        safe_body = SafeMarkdownTruncator.truncate_body(clean_body, max_length=6000)
+
+        # Build Tier 2 Conversational Card
+        link_display = docs_url_line.replace("🔗 Docs 열기: ", "").replace("Google Drive: ", "").strip()
+        conversational_card = (
+            f"[💬 대화형 브리핑 카드 - 사용자에게 이 톤으로 즉시 전달]\n"
+            f"\"요청하신 작업이 완료되었습니다! 핵심 결과를 브리핑해 드릴게요:\n\n"
+            f"1. 상태: [{badge}] {clean_entity}\n"
+            f"2. 핵심: {clean_summary}\n"
+            f"3. 전체 내용: {link_display} (탭하여 전체 확인)\n\n"
+            f"{first_line_choices}\""
+        )
+
+        watermark = TaskWatermark.generate(repo=target_repo, channel="tasks", trace_id=trace_id)
+
+        feedback_notes = (
+            f"{first_line_choices}\n---\n"
+            f"{conversational_card}\n---\n"
+            f"🎯 [{body_header}]\n"
+            f"{safe_body}\n\n"
+            f"{docs_url_line}\n"
+            f"{session_badge}"
+            f"{watermark}"
+        ).strip()
+        return feedback_notes
 
     def check_and_process_google_tasks(self):
         """Polls Google Tasks for 0-Tap mobile tasks registered via Gemini Mobile (@Google Tasks)."""
@@ -1235,12 +1288,14 @@ class GemBridgeDaemonV2:
                         rep_folder = self.storage_manager.get_destination_folder("reports") if self.storage_manager else self.folder_id
                         doc_title = self.storage_manager.format_mobile_title(TaskType.READ, intent.target_repo, intent.summary) if self.storage_manager else task_title
                         result = self.read_executor.execute(repo_path, intent, original_title=doc_title, parent_id=rep_folder, session_context=session_ctx)
+                        target_hero = (intent.target_files_or_dirs[0] if intent.target_files_or_dirs else None) or result.get('target_path')
                         if self.session_manager and session:
                             self.session_manager.record_turn(
                                 session=session,
                                 task_type=TurnType.READ,
                                 user_input=full_task_text,
                                 summary=intent.summary,
+                                target_path=target_hero,
                                 execution_preview=result.get('preview', '')
                             )
                         if self.mode == "hybrid":
@@ -1274,18 +1329,19 @@ class GemBridgeDaemonV2:
                         turn_num = len(session.turns) if session else 1
                         session_badge = f"\n[📌 세션: {intent.target_repo} ({turn_num}턴 진행 중 / 30분 유효)]\n" if session else ""
 
-                        first_line_choices = "👉 선택지: 1. 세부 항목 상세 분석 | 2. 관련 문서/코드 추가 탐색 | 3. 확인 완료"
-                        feedback_notes = (
-                            f"{first_line_choices}\n---\n"
-                            f"[분석 완료] {intent.target_repo}\n"
-                            f"주제: {intent.summary}\n"
-                            f"{docs_url_line}\n{session_badge}\n"
-                            f"[보고서 요약]\n"
-                            f"{clean_preview}\n\n"
-                            f"[전체 보고서 안내]\n"
-                            f"Google Drive: {doc_name}\n"
-                            f"{docs_url_line if has_valid_link else ''}"
-                        ).strip()
+                        first_line_choices = "👉 추천 다음 작업: 1. 세부 항목 상세 분석 | 2. 관련 문서/코드 추가 탐색 | 3. 확인 완료"
+                        feedback_notes = self._build_universal_feedback_notes(
+                            first_line_choices=first_line_choices,
+                            badge="완료: 분석",
+                            target_entity=intent.target_repo,
+                            summary_one_liner=intent.summary,
+                            docs_url_line=docs_url_line,
+                            session_badge=session_badge,
+                            body_header="핵심 보고서 요약",
+                            body_content=clean_preview,
+                            target_repo=intent.target_repo,
+                            trace_id=trace_id
+                        )
                         repo_short = intent.target_repo or "분석"
                         summary_msg = intent.summary or "아키텍처 분석"
                         rich_title = f"[✅완료: 분석] {repo_short} - {summary_msg}"[:120]
@@ -1295,6 +1351,13 @@ class GemBridgeDaemonV2:
                             title=rich_title,
                             feedback_notes=feedback_notes
                         )
+                        try:
+                            self.tasks_manager.retire_previous_tasks(
+                                target_repo=intent.target_repo,
+                                current_task_id=task_id
+                            )
+                        except Exception as retire_err:
+                            logger.warning(f"retire_previous_tasks failed non-blockingly: {retire_err}")
 
                     elif intent.task_type == TaskType.WRITE:
                         result = self.write_executor.execute(repo_path, intent, session_context=session_ctx)
@@ -1308,10 +1371,11 @@ class GemBridgeDaemonV2:
                                 commit_hash=result.get('commit_hash'),
                                 raw_diff=result.get('diff')
                             )
+                        doc_id = None
                         if self.mode == "hybrid" or self.drive_backup:
                             commit_folder = self.storage_manager.get_destination_folder("commits") if self.storage_manager else self.folder_id
                             doc_title = self.storage_manager.format_mobile_title(TaskType.WRITE, intent.target_repo, result.get('commit_message') or intent.summary) if self.storage_manager else task_title
-                            self._create_completion_doc(doc_title, result, parent_id=commit_folder)
+                            doc_id = self._create_completion_doc(doc_title, result, parent_id=commit_folder)
                         if self.mode == "hybrid":
                             output_str = (
                                 f"### 🟢 [0-Tap Tasks Git 반영 완료]\n"
@@ -1343,20 +1407,30 @@ class GemBridgeDaemonV2:
                             k in full_task_text.lower() for k in ['메모', 'daily-note', '아이디어', '추가', '기록']
                         )
                         if is_memo:
-                            first_line_choices = "👉 선택지: 1. 이 아이디어로 기술 기획서 초안 작성 | 2. 확인 완료"
-                            rich_prefix = f"[📝메모기록: {commit_hash_short}]"
+                            first_line_choices = "👉 추천 다음 작업: 1. 이 아이디어로 기술 기획서 초안 작성 | 2. 확인 완료"
+                            rich_prefix = f"[📝메모: {commit_hash_short}]"
+                            badge_text = f"메모기록: {commit_hash_short}"
+                            body_hdr = "기록된 메모 내용"
+                            body_content = diff_text
                         else:
-                            first_line_choices = "👉 선택지: 1. 추가 단위 테스트 실행 | 2. 다른 파일 연계 수정 | 3. 확인 완료"
+                            first_line_choices = "👉 추천 다음 작업: 1. 추가 단위 테스트 실행 | 2. 다른 파일 연계 수정 | 3. 확인 완료"
                             rich_prefix = f"[✅완료: {commit_hash_short}]"
+                            badge_text = f"코드수정: {commit_hash_short}"
+                            body_hdr = "변경 내용 (Diff)"
+                            body_content = f"```diff\n{diff_text}\n```"
 
-                        feedback_notes = (
-                            f"{first_line_choices}\n---\n"
-                            f"[반영 완료] {intent.target_repo}\n"
-                            f"변경 파일: {result.get('target_path')}\n"
-                            f"커밋: {commit_hash_short} ({result.get('commit_message')})\n"
-                            f"상태: origin/main 푸시 완료\n{session_badge}\n"
-                            f"[변경 내용 (Diff)]\n"
-                            f"{diff_text}"
+                        docs_url_line = f"🔗 Docs: https://docs.google.com/document/d/{doc_id}/edit" if doc_id else ""
+                        feedback_notes = self._build_universal_feedback_notes(
+                            first_line_choices=first_line_choices,
+                            badge=badge_text,
+                            target_entity=result.get('target_path') or intent.target_repo,
+                            summary_one_liner=result.get('commit_message') or intent.summary or "변경사항 반영 완료",
+                            docs_url_line=docs_url_line,
+                            session_badge=session_badge,
+                            body_header=body_hdr,
+                            body_content=body_content,
+                            target_repo=intent.target_repo,
+                            trace_id=trace_id
                         )
                         target_file = result.get('target_path') or intent.target_path or intent.target_repo
                         summary_msg = result.get('commit_message') or intent.summary or "코드 수정 완료"
@@ -1367,6 +1441,13 @@ class GemBridgeDaemonV2:
                             title=rich_title,
                             feedback_notes=feedback_notes
                         )
+                        try:
+                            self.tasks_manager.retire_previous_tasks(
+                                target_repo=intent.target_repo,
+                                current_task_id=task_id
+                            )
+                        except Exception as retire_err:
+                            logger.warning(f"retire_previous_tasks failed non-blockingly: {retire_err}")
 
                     elif intent.task_type == TaskType.EXEC:
                         if self.mode == "hybrid" or self.drive_backup:
@@ -1376,14 +1457,23 @@ class GemBridgeDaemonV2:
                             log_folder = None
                             doc_title = task_title
                         result = self.exec_executor.execute(repo_path, intent, original_title=doc_title, parent_id=log_folder)
+
+                        raw_output = (result.get('stdout', '') + "\n" + result.get('stderr', '')).strip()
+                        # Loop A: Detect failing file from pytest/unittest traceback for seamless cross-scenario transition
+                        failing_target_path = None
+                        fail_match = re.search(r"FAILED\s+([^\s:]+)::", raw_output)
+                        if fail_match:
+                            failing_target_path = fail_match.group(1).strip()
+
                         if self.session_manager and session:
                             self.session_manager.record_turn(
                                 session=session,
                                 task_type=TurnType.EXEC,
                                 user_input=full_task_text,
                                 summary=intent.summary or intent.exec_command,
+                                target_path=failing_target_path,
                                 exit_code=result.get('exit_code'),
-                                raw_stdout=result.get('stdout', '') + "\n" + result.get('stderr', '')
+                                raw_stdout=raw_output
                             )
                         if self.mode == "hybrid":
                             output_str = (
@@ -1392,7 +1482,7 @@ class GemBridgeDaemonV2:
                                 f"- 명령어: `{intent.exec_command}`\n"
                                 f"- 종료 코드: `{result.get('exit_code')}`\n\n"
                                 f"#### 실행 콘솔 출력\n"
-                                f"```text\n{(result.get('stdout', '') + chr(10) + result.get('stderr', '')).strip() or '(출력 없음)'}\n```"
+                                f"```text\n{raw_output or '(출력 없음)'}\n```"
                             )
                             self._sync_task_result_to_console(
                                 output_str=output_str,
@@ -1403,42 +1493,63 @@ class GemBridgeDaemonV2:
                             )
 
                         exit_code = result.get('exit_code')
-                        console_output = (result.get('stdout', '') + "\n" + result.get('stderr', '')).strip() or "(출력 없음)"
-                        if len(console_output) > 2000:
-                            console_output = console_output[:2000] + "\n...(이하 출력 생략)..."
-
                         is_exec_ok = (str(exit_code) == "0")
                         turn_num = len(session.turns) if session else 1
                         session_badge = f"\n[📌 세션: {intent.target_repo} ({turn_num}턴 진행 중 / 30분 유효)]\n" if session else ""
 
+                        console_output = raw_output or "(출력 없음)"
+                        if len(console_output) > 2000:
+                            console_output = console_output[:2000] + "\n...(이하 출력 생략)..."
+
                         is_test = any(k in (intent.exec_command or full_task_text).lower() for k in ['test', 'pytest', 'unittest'])
                         if is_test:
                             if is_exec_ok:
-                                first_line_choices = "👉 선택지: 1. 관련 기능 추가 구현 | 2. 확인 완료"
-                                prefix = "✅테스트: PASS"
+                                first_line_choices = "👉 추천 다음 작업: 1. 관련 기능 추가 구현 | 2. origin/main 푸시 확인 | 3. 확인 완료"
+                                badge_text = "테스트: PASS"
+                                rich_prefix = "[✅테스트: PASS]"
                             else:
-                                first_line_choices = "👉 선택지: 1. 실패한 테스트에 대한 수정안(Diff) 생성 | 2. 상세 재실행 | 3. 확인 완료"
-                                prefix = "❌테스트: FAIL"
+                                first_line_choices = "👉 추천 다음 작업: 1. 실패한 테스트 수정안(Diff) 생성 | 2. 상세 로그 분석 | 3. 확인 완료"
+                                badge_text = "테스트: FAIL"
+                                rich_prefix = "[❌테스트: FAIL]"
                         else:
-                            first_line_choices = "👉 선택지: 1. 결과 기반 후속 명령 실행 | 2. 확인 완료"
-                            prefix = "✅완료" if is_exec_ok else "❌오류"
+                            if is_exec_ok:
+                                first_line_choices = "👉 추천 다음 작업: 1. 결과 기반 후속 명령 실행 | 2. 확인 완료"
+                                badge_text = "실행 성공"
+                                rich_prefix = "[✅실행]"
+                            else:
+                                first_line_choices = "👉 추천 다음 작업: 1. 오류 원인 분석 및 수정 | 2. 재실행 | 3. 확인 완료"
+                                badge_text = "실행 오류"
+                                rich_prefix = "[❌실행: 오류]"
 
-                        feedback_notes = (
-                            f"{first_line_choices}\n---\n"
-                            f"[{'실행 성공' if is_exec_ok else '실행 오류'}] {intent.target_repo}\n"
-                            f"명령어: {intent.exec_command}\n"
-                            f"종료 코드: {exit_code}\n{session_badge}\n"
-                            f"[콘솔 출력]\n"
-                            f"{console_output}"
+                        docs_url_line = f"🔗 Docs: https://docs.google.com/document/d/{result.get('doc_id')}/edit" if result.get('doc_id') else ""
+
+                        feedback_notes = self._build_universal_feedback_notes(
+                            first_line_choices=first_line_choices,
+                            badge=badge_text,
+                            target_entity=f"{intent.target_repo} ({intent.exec_command})",
+                            summary_one_liner=f"종료 코드: {exit_code}",
+                            docs_url_line=docs_url_line,
+                            session_badge=session_badge,
+                            body_header="콘솔 출력 요약",
+                            body_content=f"```text\n{console_output}\n```",
+                            target_repo=intent.target_repo,
+                            trace_id=trace_id
                         )
                         cmd_summary = intent.summary or intent.exec_command or "명령 실행"
-                        rich_title = f"[{prefix}] {intent.target_repo} - {cmd_summary}"[:120]
+                        rich_title = f"{rich_prefix} {intent.target_repo} - {cmd_summary}"[:120]
                         self.tasks_manager.update_task_with_feedback(
                             task_id=task_id,
                             is_success=is_exec_ok,
                             title=rich_title,
                             feedback_notes=feedback_notes
                         )
+                        try:
+                            self.tasks_manager.retire_previous_tasks(
+                                target_repo=intent.target_repo,
+                                current_task_id=task_id
+                            )
+                        except Exception as retire_err:
+                            logger.warning(f"retire_previous_tasks failed non-blockingly: {retire_err}")
 
                 except Exception as task_err:
                     logger.error(f"Failed to process Google Task '{task_id}': {task_err}", exc_info=True)
