@@ -89,6 +89,75 @@ class TaskWatermark:
         return name or "gem-bridge"
 
 
+class ExecutiveSummaryExtractor:
+    """
+    Extracts 2~3 substantive fact bullet points from reports, diffs, or execution outputs.
+    Ensures Google Tasks notes present real findings at line 1 for immediate mobile Gemini recitation.
+    """
+
+    @staticmethod
+    def extract_from_report(report_text: str, default_summary: str = "") -> List[str]:
+        if not report_text:
+            return [f"• {default_summary}"] if default_summary else []
+
+        # 1. Look for Executive Summary section (## 1. 핵심 요약 or ▶ 1. 핵심 요약 or ## 1. 개요)
+        pattern = r"(?:##|▶|###)\s*1\.\s*([^\n]+)\n(.*?)(?=(?:##|▶|###|\n---\n|$))"
+        match = re.search(pattern, report_text, re.DOTALL)
+        content_block = match.group(2).strip() if match else report_text
+
+        # 2. Extract bullet points (- or * or • or 1.)
+        bullets: List[str] = []
+        for line in content_block.split("\n"):
+            clean = line.strip()
+            if clean.startswith(("- ", "* ", "• ")) or re.match(r"^\d+\.\s+", clean):
+                text = re.sub(r"^[-*•\d\.]+\s*", "", clean).replace("**", "").replace("`", "").strip()
+                if len(text) > 5 and not any(text.startswith(k) for k in ["요청 요약", "대상 저장소", "분석 주제", "분석 대상"]):
+                    bullets.append(f"• {text}")
+                    if len(bullets) >= 3:
+                        break
+
+        # 3. Fallback: Take first 2~3 non-empty substantive sentences if no bullets found
+        if not bullets:
+            paragraphs = [p.strip() for p in content_block.split("\n\n") if p.strip() and not p.startswith("#")]
+            if paragraphs:
+                first_p = paragraphs[0].replace("\n", " ")
+                sentences = [s.strip() for s in re.split(r"[.!?]\s+", first_p) if len(s.strip()) > 10]
+                bullets = [f"• {s}" for s in sentences[:3]]
+
+        return bullets or [f"• {default_summary}"]
+
+    @staticmethod
+    def extract_from_write(target_path: str, commit_msg: str, diff_text: str = "", commit_hash: str = "") -> List[str]:
+        bullets = []
+        if target_path:
+            bullets.append(f"• 대상 파일: {target_path}")
+        h_short = f" ({commit_hash[:7]})" if commit_hash else ""
+        if commit_msg:
+            bullets.append(f"• 커밋 내용: {commit_msg}{h_short}")
+        if diff_text:
+            added = len([l for l in diff_text.splitlines() if l.startswith("+") and not l.startswith("+++")])
+            removed = len([l for l in diff_text.splitlines() if l.startswith("-") and not l.startswith("---")])
+            bullets.append(f"• 변경 규모: +{added}행 추가, -{removed}행 삭제 (origin/main 푸시 완료)")
+        else:
+            bullets.append("• 변경 상태: origin/main 푸시 완료")
+        return bullets
+
+    @staticmethod
+    def extract_from_exec(command: str, exit_code: Any, raw_output: str = "") -> List[str]:
+        bullets = [f"• 실행 명령: {command}"]
+        is_ok = (str(exit_code) == "0")
+        bullets.append(f"• 종료 코드: {exit_code} ({'정상 완료' if is_ok else '오류 발생'})")
+        if raw_output:
+            score_match = re.search(r"(\d+\s+passed[^\n]*)", raw_output, re.IGNORECASE)
+            if score_match:
+                bullets.append(f"• 테스트 결과: {score_match.group(1).strip()}")
+            else:
+                lines = [l.strip() for l in raw_output.splitlines() if l.strip()]
+                if lines:
+                    bullets.append(f"• 콘솔 요약: {lines[-1][:120]}")
+        return bullets
+
+
 class GoogleTasksManager:
     """
     Manager for interacting with the Google Tasks API.

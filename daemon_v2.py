@@ -28,7 +28,7 @@ from core.console_protocol import (
 from core.telemetry import TimeTagFormatter, PipelineProfiler
 from core.drive_storage import DriveStorageManager
 from core.janitor import StorageJanitor
-from core.google_tasks import GoogleTasksManager, TaskWatermark, SafeMarkdownTruncator
+from core.google_tasks import GoogleTasksManager, TaskWatermark, SafeMarkdownTruncator, ExecutiveSummaryExtractor
 from core.session_manager import SessionManager, TurnType
 
 
@@ -1172,7 +1172,7 @@ class GemBridgeDaemonV2:
         first_line_choices: str,
         badge: str,
         target_entity: str,
-        summary_one_liner: str,
+        briefing_bullets: List[str],
         docs_url_line: str,
         session_badge: str,
         body_header: str,
@@ -1181,41 +1181,40 @@ class GemBridgeDaemonV2:
         trace_id: str = ""
     ) -> str:
         """
-        Builds the 4-tier Universal Mobile Seamless Notes:
-        Tier 1: First-line choices (👉 다음 추천 작업)
-        Tier 2: Conversational Briefing Card ([💬 대화형 브리핑 카드] - Anti-Leaking)
-        Tier 3: Content-First Snapshot with SafeMarkdownTruncator
-        Tier 4: Deep Link & Session Badge & Watermark
+        Builds the Fact-First Universal Mobile Seamless Notes (v2.1.21):
+        Tier 1: 📢 [핵심 브리핑] with substantive fact bullets at line 1
+        Tier 2: 👉 추천 다음 작업: 1. ... | 2. ...
+        Tier 3: 🔗 Docs & 세션 배지
+        Tier 4: --- 🎯 [세부 내용] & 워터마크
         """
-        # Sanitize any local absolute paths from user view to prevent AI safety trigger
         clean_entity = target_entity.replace("/home/al-hub/workspace/", "")
-        clean_summary = summary_one_liner.replace("/home/al-hub/workspace/", "")
         clean_body = body_content.replace("/home/al-hub/workspace/", "")
-        safe_body = SafeMarkdownTruncator.truncate_body(clean_body, max_length=6000)
+        safe_body = SafeMarkdownTruncator.truncate_body(clean_body, max_length=5000)
 
-        # Build Tier 2 Conversational Card
-        link_display = docs_url_line.replace("🔗 Docs 열기: ", "").replace("Google Drive: ", "").strip()
-        conversational_card = (
-            f"[💬 대화형 브리핑 카드 - 사용자에게 이 톤으로 즉시 전달]\n"
-            f"\"요청하신 작업이 완료되었습니다! 핵심 결과를 브리핑해 드릴게요:\n\n"
-            f"1. 상태: [{badge}] {clean_entity}\n"
-            f"2. 핵심: {clean_summary}\n"
-            f"3. 전체 내용: {link_display} (탭하여 전체 확인)\n\n"
-            f"{first_line_choices}\""
+        # Build substantive bullets text
+        if briefing_bullets:
+            bullets_text = "\n".join(b.replace("/home/al-hub/workspace/", "") for b in briefing_bullets)
+        else:
+            bullets_text = f"• [{badge}] {clean_entity} 작업 완료"
+
+        tier1_briefing = (
+            f"📢 [핵심 브리핑]\n"
+            f"{bullets_text}"
         )
 
         watermark = TaskWatermark.generate(repo=target_repo, channel="tasks", trace_id=trace_id)
 
-        feedback_notes = (
-            f"{first_line_choices}\n---\n"
-            f"{conversational_card}\n---\n"
-            f"🎯 [{body_header}]\n"
-            f"{safe_body}\n\n"
-            f"{docs_url_line}\n"
-            f"{session_badge}"
-            f"{watermark}"
-        ).strip()
-        return feedback_notes
+        sections = [tier1_briefing, first_line_choices]
+        if docs_url_line:
+            sections.append(docs_url_line)
+        if session_badge:
+            sections.append(session_badge.strip())
+
+        detail_section = f"---\n🎯 [{body_header}]\n{safe_body}" if safe_body else ""
+        if detail_section:
+            sections.append(detail_section)
+
+        return "\n\n".join(sections) + watermark
 
     def check_and_process_google_tasks(self):
         """Polls Google Tasks for 0-Tap mobile tasks registered via Gemini Mobile (@Google Tasks)."""
@@ -1320,6 +1319,7 @@ class GemBridgeDaemonV2:
                         docs_url_line = f"🔗 Docs 열기: https://docs.google.com/document/d/{doc_id}/edit" if has_valid_link else f"Google Drive: {doc_name}"
 
                         report_text = result.get('report') or result.get('preview', '')
+                        briefing_bullets = ExecutiveSummaryExtractor.extract_from_report(report_text, default_summary=intent.summary)
                         clean_preview = report_text.replace("```", "").replace("**", "").replace("### ", "■ ").replace("## ", "▶ ").replace("# ", "").strip()
                         if len(clean_preview) > 1500:
                             cut_idx = clean_preview[:1500].rfind("\n")
@@ -1334,7 +1334,7 @@ class GemBridgeDaemonV2:
                             first_line_choices=first_line_choices,
                             badge="완료: 분석",
                             target_entity=intent.target_repo,
-                            summary_one_liner=intent.summary,
+                            briefing_bullets=briefing_bullets,
                             docs_url_line=docs_url_line,
                             session_badge=session_badge,
                             body_header="핵심 보고서 요약",
@@ -1397,6 +1397,12 @@ class GemBridgeDaemonV2:
                         commit_hash = result.get('commit_hash', '')
                         commit_hash_short = commit_hash[:7] if commit_hash else "local"
                         diff_text = (result.get('diff') or '(신규 파일)').strip()
+                        briefing_bullets = ExecutiveSummaryExtractor.extract_from_write(
+                            target_path=result.get('target_path') or intent.target_path or "",
+                            commit_msg=result.get('commit_message') or intent.summary or "코드 수정 반영",
+                            diff_text=diff_text,
+                            commit_hash=commit_hash
+                        )
                         if len(diff_text) > 1500:
                             diff_text = diff_text[:1500] + "\n...(이하 diff 생략)..."
 
@@ -1424,7 +1430,7 @@ class GemBridgeDaemonV2:
                             first_line_choices=first_line_choices,
                             badge=badge_text,
                             target_entity=result.get('target_path') or intent.target_repo,
-                            summary_one_liner=result.get('commit_message') or intent.summary or "변경사항 반영 완료",
+                            briefing_bullets=briefing_bullets,
                             docs_url_line=docs_url_line,
                             session_badge=session_badge,
                             body_header=body_hdr,
@@ -1521,13 +1527,18 @@ class GemBridgeDaemonV2:
                                 badge_text = "실행 오류"
                                 rich_prefix = "[❌실행: 오류]"
 
+                        briefing_bullets = ExecutiveSummaryExtractor.extract_from_exec(
+                            command=intent.exec_command or "명령 실행",
+                            exit_code=exit_code,
+                            raw_output=raw_output
+                        )
                         docs_url_line = f"🔗 Docs: https://docs.google.com/document/d/{result.get('doc_id')}/edit" if result.get('doc_id') else ""
 
                         feedback_notes = self._build_universal_feedback_notes(
                             first_line_choices=first_line_choices,
                             badge=badge_text,
                             target_entity=f"{intent.target_repo} ({intent.exec_command})",
-                            summary_one_liner=f"종료 코드: {exit_code}",
+                            briefing_bullets=briefing_bullets,
                             docs_url_line=docs_url_line,
                             session_badge=session_badge,
                             body_header="콘솔 출력 요약",

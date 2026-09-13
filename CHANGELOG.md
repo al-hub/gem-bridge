@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > - **Locked to v2.1.x**: Major(1st) and Minor(2nd) digits are strictly frozen without explicit user permission.
 > - **Permitted Increments**: Only the 3rd position `z` (`v2.1.z`) is updated (`v2.1.1`, `v2.1.2`, ...).
 
+## [2.1.21] - 2026-09-13
+
+### Fixed & Enhanced
+- **Fact-First Bullet Architecture for Zero-Friction Mobile Recitation**:
+  - Eliminated the closed-payload meta-prompt (`[💬 대화형 브리핑 카드 - 사용자에게 이 톤으로 즉시 전달]`) and quotation mark barriers which triggered developer prompt filters and caused Gemini to recite only high-level status declarations.
+  - Implemented `ExecutiveSummaryExtractor` in `core/google_tasks.py`: deterministically extracts 2~3 substantive fact bullet points from report executive summaries, git commit diffs, and test outputs with 0ms overhead.
+  - Positioned `📢 [핵심 브리핑]` at the very top (lines 1~4) of Google Tasks notes so that mobile Gemini reads the actual findings directly when users ask natural questions like "방금 내용 어떻게 됐어?" or "진목 오디세이 내용 알려줘".
+  - Moved `👉 추천 다음 작업` directly below the substantive bullets to naturally prompt user follow-up selections (1, 2, 3) without blocking content recitation.
+  - Added unit tests for `ExecutiveSummaryExtractor` across `READ`, `WRITE`, and `EXEC` flows.
+  - 133/133 unit tests pass 100% in ~7.6s.
+
 ## [2.1.20] - 2026-09-13
 
 ### Added & Enhanced

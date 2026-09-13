@@ -264,6 +264,50 @@ class TestGoogleTasksManager(unittest.TestCase):
         self.assertEqual(patch_kwargs["task"], "t_kum_old")
         self.assertEqual(patch_kwargs["body"]["status"], "completed")
 
+    def test_executive_summary_extractor_from_report(self):
+        from core.google_tasks import ExecutiveSummaryExtractor
+        report = """# [보고서] kum jinmok-odyssey-memory.md 내용 확인
+
+▶ 1. 핵심 요약 (Executive Summary)
+- 문서 개요: 2026년 9월, 그리스 신화 《오디세이》의 구조를 차용하여 군 복무 중인 아들(최진목)의 여정을 가족만의 따뜻한 이야기로 재해석한 창작 및 추억 기록입니다.
+- 주요 내용: DIMA에서의 출항부터 논산 훈련소와 화천의 새로운 생활, 보급 행정병으로의 역할 변화를 담았습니다.
+- 결론 및 의의: 가족의 사랑과 응원을 담아낸 한 편의 영화 같은 추억 저장소입니다.
+
+▶ 2. 주요 내용 및 상세 해설
+상세 내용입니다.
+"""
+        bullets = ExecutiveSummaryExtractor.extract_from_report(report)
+        self.assertEqual(len(bullets), 3)
+        self.assertTrue(any("오디세이" in b for b in bullets))
+        self.assertTrue(any("DIMA" in b for b in bullets))
+
+    def test_executive_summary_extractor_from_write(self):
+        from core.google_tasks import ExecutiveSummaryExtractor
+        diff = "+ def new_func(): pass\n+ return True\n- pass"
+        bullets = ExecutiveSummaryExtractor.extract_from_write(
+            target_path="src/auth.py",
+            commit_msg="fix token expiration",
+            diff_text=diff,
+            commit_hash="a1b2c3d4e5f6"
+        )
+        self.assertEqual(len(bullets), 3)
+        self.assertIn("src/auth.py", bullets[0])
+        self.assertIn("a1b2c3d", bullets[1])
+        self.assertIn("+2행 추가", bullets[2])
+
+    def test_executive_summary_extractor_from_exec(self):
+        from core.google_tasks import ExecutiveSummaryExtractor
+        raw_out = "Ran 130 tests in 7.8s\n\nOK\n130 passed in 7.8s"
+        bullets = ExecutiveSummaryExtractor.extract_from_exec(
+            command="pytest tests",
+            exit_code=0,
+            raw_output=raw_out
+        )
+        self.assertEqual(len(bullets), 3)
+        self.assertIn("pytest tests", bullets[0])
+        self.assertIn("정상 완료", bullets[1])
+        self.assertIn("130 passed", bullets[2])
+
 
 if __name__ == "__main__":
     unittest.main()

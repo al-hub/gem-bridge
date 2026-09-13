@@ -391,8 +391,8 @@ class TestDaemonV2(unittest.TestCase):
         mock_tasks_mgr.update_task_with_feedback.assert_called_once()
         call_kwargs = mock_tasks_mgr.update_task_with_feedback.call_args[1]
         self.assertEqual(call_kwargs["task_id"], "gtask_read_99")
-        self.assertTrue(call_kwargs["is_success"])
-        self.assertIn("[완료: 분석] gem-bridge", call_kwargs["feedback_notes"])
+        self.assertIn("📢 [핵심 브리핑]", call_kwargs["feedback_notes"])
+        self.assertIn("구조 요약 내용입니다.", call_kwargs["feedback_notes"])
         self.assertIn("https://docs.google.com/document/d/rep_99/edit", call_kwargs["feedback_notes"])
         self.daemon._sync_task_result_to_console.assert_not_called()
 

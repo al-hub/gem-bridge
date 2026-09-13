@@ -1,4 +1,4 @@
-# gem-bridge (v2.1.20 Core Architecture)
+# gem-bridge (v2.1.21 Core Architecture)
 
 > **스마트폰의 Google Gemini 모바일 앱 및 Google Tasks/Docs와 로컬/원격 Git 저장소를 유기적으로 연결하는 전 시나리오 공용 모바일 심리스(UMSP) 에이전트 브리지 시스템**
 
